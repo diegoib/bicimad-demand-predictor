@@ -7,8 +7,8 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 ## Fase 0: Scaffolding del repositorio
 
-- [ ] **0.1** Crear estructura de directorios: `src/{ingestion,features,training,serving,monitoring,common}`, `dags/`, `tests/`, `infra/`, `docs/`, `notebooks/`
-- [ ] **0.2** Crear `pyproject.toml` con dependencias organizadas por grupo:
+- [x] **0.1** Crear estructura de directorios: `src/{ingestion,features,training,serving,monitoring,common}`, `dags/`, `tests/`, `infra/`, `docs/`, `notebooks/`
+- [x] **0.2** Crear `pyproject.toml` con dependencias organizadas por grupo:
   - core: pydantic, requests, python-dateutil
   - ingestion: google-cloud-storage, google-cloud-bigquery
   - features: pandas, polars (opcional)
@@ -16,17 +16,17 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - serving: fastapi, uvicorn
   - monitoring: evidently
   - dev: pytest, ruff, mypy, pre-commit
-- [ ] **0.3** Crear `Makefile` con los comandos listados en CLAUDE.md
-- [ ] **0.4** Crear `src/common/config.py` con Pydantic Settings (BICIMAD_ENV, BICIMAD_GCS_BUCKET, BICIMAD_BQ_DATASET, BICIMAD_EMT_EMAIL, BICIMAD_EMT_PASSWORD)
-- [ ] **0.5** Crear `src/common/schemas.py` con los modelos Pydantic:
+- [x] **0.3** Crear `Makefile` con los comandos listados en CLAUDE.md
+- [x] **0.4** Crear `src/common/config.py` con Pydantic Settings (BICIMAD_ENV, BICIMAD_GCS_BUCKET, BICIMAD_BQ_DATASET, BICIMAD_EMT_EMAIL, BICIMAD_EMT_PASSWORD)
+- [x] **0.5** Crear `src/common/schemas.py` con los modelos Pydantic:
   - `StationSnapshot`: un registro de estación de la API (dock_bikes, free_bases, total_bases, geometry, id, number, name, activate, no_available)
   - `BicimadApiResponse`: la respuesta completa de la API (code, description, datetime, data: list[StationSnapshot])
   - `WeatherSnapshot`: datos meteorológicos de Open-Meteo (temperature_2m, precipitation, wind_speed_10m, weather_code, timestamp)
   - `FeatureRow`: una fila del dataset de entrenamiento (todas las features + target)
   - `PredictionOutput`: respuesta de la API de serving (station_id, predicted_dock_bikes, prediction_time, model_version)
-- [ ] **0.6** Crear `src/common/logging_setup.py` con configuración de logging estructurado (JSON en prod, texto en dev)
-- [ ] **0.7** Crear `.gitignore`, `README.md` (en español, breve), `.pre-commit-config.yaml`
-- [ ] **0.8** Ejecutar `make lint` y `make test` (aunque no haya tests reales aún, verificar que el setup funciona)
+- [x] **0.6** Crear `src/common/logging_setup.py` con configuración de logging estructurado (JSON en prod, texto en dev)
+- [x] **0.7** Crear `.gitignore`, `README.md` (en español, breve), `.pre-commit-config.yaml`
+- [x] **0.8** Ejecutar `make lint` y `make test` (aunque no haya tests reales aún, verificar que el setup funciona)
 
 **Done cuando:** `make lint` pasa sin errores, la estructura de directorios existe, los schemas compilan, y un `from src.common.schemas import StationSnapshot` funciona.
 
