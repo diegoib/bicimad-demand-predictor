@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Environment
@@ -27,19 +28,12 @@ class Settings(BaseSettings):
     bq_dataset: str = "bicimad"
     bq_project: str = ""
 
-    # EMT Madrid API credentials
-    emt_email: str = ""
-    emt_password: str = ""
-
     # Local paths (dev mode)
     local_data_dir: str = "data/raw"
     local_model_dir: str = "data/models"
 
     # Model
     model_version: str = "latest"
-
-    # Feature flags
-    mock: bool = False
 
 
 settings = Settings()

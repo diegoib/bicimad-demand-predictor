@@ -1,0 +1,109 @@
+# Airflow 2.x — LocalExecutor setup for BiciMAD demand predictor
+#
+# Usage on the VM (or locally):
+#   1. cp infra/airflow.env.example infra/airflow.env  &&  fill in values
+#   2. Place the GCP service account key at infra/gcp-key.json
+#   3. make airflow-up
+#
+# The project root is mounted at /opt/airflow/project so DAGs can import
+# from src/ without reinstalling the package on every container restart.
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3
+  env_file:
+    - airflow.env
+  environment:
+    PYTHONPATH: /opt/airflow/project
+    # Install project ingestion dependencies on first run.
+    # For repeated restarts, build a custom image instead to avoid the delay.
+    _PIP_ADDITIONAL_REQUIREMENTS: >-
+      requests>=2.31
+      pydantic>=2.0
+      pydantic-settings>=2.0
+      python-dotenv>=1.0
+      google-cloud-storage>=2.10
+      google-cloud-bigquery>=3.11
+      google-cloud-secret-manager>=2.16
+  volumes:
+    - ../dags:/opt/airflow/dags
+    - ../src:/opt/airflow/project/src
+    - ../pyproject.toml:/opt/airflow/project/pyproject.toml:ro
+    - airflow-logs:/opt/airflow/logs
+    - airflow-plugins:/opt/airflow/plugins
+    - ./gcp-key.json:/opt/airflow/keys/gcp-key.json:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  # --------------------------------------------------------------------------
+  # Metadata database
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # One-shot initialiser: run DB migrations + create admin user
+  # --------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username admin
+          --firstname Admin
+          --lastname User
+          --role Admin
+          --email admin@bicimad.local
+          --password admin
+          || true
+      "
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # Webserver  — http://<host>:8080
+  # --------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Scheduler
+  # --------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  airflow-logs:
+  airflow-plugins:

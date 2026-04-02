@@ -44,6 +44,9 @@ htmlcov/
 .idea/
 *.swp
 
+# Claude Code — local settings (personal, no compartir)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db
@@ -58,3 +61,7 @@ infra/terraform/.terraform/
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.backup
 infra/terraform/.terraform.lock.hcl
+
+# custom
+para_documentar.txt
+gcp-key.json

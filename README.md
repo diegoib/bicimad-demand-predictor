@@ -5,7 +5,7 @@ Sistema batch de ML para predecir la disponibilidad de bicicletas en las estacio
 ## Stack
 
 - **Modelo**: LightGBM (modelo global, todas las estaciones)
-- **Features**: 29 features en 5 grupos (lag, temporal, meteorológica, histórica, estática)
+- **Features**: 36 features en 5 grupos (lag, temporal, meteorológica, histórica, estática)
 - **Orquestación**: Apache Airflow (self-hosted con Docker Compose)
 - **Infraestructura**: Google Cloud (GCS, BigQuery, Cloud Functions)
 - **Serving**: FastAPI
@@ -25,7 +25,9 @@ make setup
 
 ### Configuración de credenciales EMT
 
-Crea un fichero `.env` en la raíz con:
+**Paso 1 — Registro**: Crea una cuenta gratuita en el [Portal de la EMT MobilityLabs](https://openapi.emtmadrid.es/). Recibirás un email y contraseña de acceso.
+
+**Paso 2 — Fichero `.env`**: Crea un fichero `.env` en la raíz del proyecto (está en `.gitignore`, nunca se sube al repositorio):
 
 ```
 BICIMAD_EMT_EMAIL=tu_email@ejemplo.com
@@ -33,7 +35,17 @@ BICIMAD_EMT_PASSWORD=tu_contraseña
 BICIMAD_ENV=dev
 ```
 
-Regístrate en el [portal de la EMT](https://openapi.emtmadrid.es/) para obtener credenciales.
+Las credenciales se leen directamente de variables de entorno — nunca se almacenan en el código ni en la configuración de la aplicación.
+
+**Sobre el token**: La API devuelve un `accessToken` que expira cada 24 horas. El sistema lo cachea automáticamente en `data/.token_cache.json` y lo renueva cuando es necesario.
+
+**Modo mock** (sin credenciales reales): Para probar el pipeline de ingesta sin credenciales EMT:
+
+```
+BICIMAD_MOCK=true make ingest-local
+```
+
+**En producción (GCP)**: Las credenciales se almacenan en Google Secret Manager con los nombres de secreto `bicimad-emt-email` y `bicimad-emt-password`. El sistema los lee automáticamente cuando `BICIMAD_ENV=prod`.
 
 ### Comandos principales
 

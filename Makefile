@@ -11,9 +11,6 @@ setup:
 ingest-local:
 	$(PYTHON) -m src.ingestion.main
 
-ingest-test:
-	BICIMAD_ENV=dev BICIMAD_MOCK=true $(PYTHON) -m src.ingestion.main
-
 features:
 	$(PYTHON) -m src.features.build_dataset
 
