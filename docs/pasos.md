@@ -138,8 +138,9 @@ gsutil cp infra/gcp-key.json gs://TU_BUCKET/tmp/gcp-key.json
 
 **9.3 — Conectarte por SSH:**
 ```bash
-gcloud compute ssh bicimad-airflow --zone=europe-west1-b
+gcloud compute ssh TU_USUARIO@bicimad-airflow --zone=europe-west1-b
 ```
+Sustituye `TU_USUARIO` por el nombre de usuario de tu cuenta de Google (la parte antes de `@gmail.com`). Puedes consultarlo con `gcloud auth list`.
 
 Los siguientes comandos se ejecutan **dentro de la VM**.
 
@@ -149,10 +150,12 @@ git clone https://github.com/TU_USUARIO/TU_REPO.git bicimad
 cd bicimad
 ```
 
-**9.5 — Colocar la clave de la service account:**
+**9.5 — Descargar la clave de la service account desde GCS:**
 ```bash
-cp /tmp/gcp-key.json infra/gcp-key.json
+gsutil cp gs://TU_BUCKET/tmp/gcp-key.json infra/gcp-key.json
+gsutil rm gs://TU_BUCKET/tmp/gcp-key.json
 ```
+El segundo comando borra la clave del bucket — no debe quedar ahí permanentemente.
 
 **9.6 — Crear y rellenar el fichero `infra/airflow.env`:**
 ```bash

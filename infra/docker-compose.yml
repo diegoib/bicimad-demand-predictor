@@ -59,18 +59,7 @@ services:
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
-    command: >
-      bash -c "
-        airflow db migrate &&
-        airflow users create
-          --username admin
-          --firstname Admin
-          --lastname User
-          --role Admin
-          --email admin@bicimad.local
-          --password admin
-          || true
-      "
+    command: bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true"
     restart: "no"
 
   # --------------------------------------------------------------------------
@@ -88,6 +77,11 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   # --------------------------------------------------------------------------
   # Scheduler
@@ -102,6 +96,11 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:

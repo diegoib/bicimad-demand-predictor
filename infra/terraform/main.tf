@@ -214,8 +214,21 @@ resource "google_compute_instance" "airflow" {
   metadata_startup_script = <<-EOT
     #!/bin/bash
     set -e
+    # Wait for apt lock released by unattended-upgrades on first boot
+    systemd-run --property="After=apt-daily.service apt-daily-upgrade.service" \
+      --wait /bin/true 2>/dev/null || true
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
     apt-get update -qq
-    apt-get install -y -qq docker.io docker-compose-plugin git
+    apt-get install -y -qq ca-certificates curl gnupg git
+    # Docker official repo (docker-compose-plugin not in Debian default repos)
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
     systemctl enable docker
     systemctl start docker
     usermod -aG docker $(logname 2>/dev/null || echo debian)
