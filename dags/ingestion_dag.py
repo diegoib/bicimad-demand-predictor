@@ -1,6 +1,7 @@
 """Airflow DAG — BiciMAD station snapshot ingestion.
 
-Runs every 15 minutes.  Calls ``src.ingestion.main.ingest()`` which:
+Runs every 15 minutes.  Calls ``src/ingestion/main.py`` via BashOperator to
+spawn a clean subprocess (avoids fork() memory inheritance from the scheduler):
   1. Authenticates with the EMT API (token cached 23 h in prod via GCS or
      refreshed per-invocation when no persistent cache is available).
   2. Fetches all ~634 station snapshots.
@@ -14,10 +15,9 @@ No business logic lives here — this DAG is pure orchestration.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 
 # ---------------------------------------------------------------------------
 # Default arguments applied to every task
@@ -50,24 +50,11 @@ with DAG(
 ) as dag:
     # ------------------------------------------------------------------
     # Task: run one ingestion cycle
+    # BashOperator spawns a fresh subprocess, avoiding the memory overhead
+    # of fork()-ing the scheduler process (critical on memory-constrained VMs).
     # ------------------------------------------------------------------
 
-    def run_ingestion(**context: Any) -> dict[str, Any]:
-        """Import and call ingest() at task runtime.
-
-        Deferred import keeps DAG parse time fast — Airflow workers load the
-        src package only when the task actually executes.
-        """
-        from src.ingestion.main import ingest  # noqa: PLC0415
-
-        result = ingest()
-
-        # Surface key metrics in the Airflow task log / XCom
-        context["ti"].xcom_push(key="stations_count", value=result.get("stations", 0))
-        context["ti"].xcom_push(key="ingest_timestamp", value=result.get("timestamp", ""))
-        return result
-
-    ingest_task = PythonOperator(
+    ingest_task = BashOperator(
         task_id="ingest_stations_and_weather",
-        python_callable=run_ingestion,
+        bash_command="cd /opt/airflow/project && PYTHONPATH=/opt/airflow/project python -m src.ingestion.main",
     )
