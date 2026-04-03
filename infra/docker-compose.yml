@@ -88,6 +88,16 @@ services:
   # --------------------------------------------------------------------------
   airflow-scheduler:
     <<: *airflow-common
+    environment:
+      PYTHONPATH: /opt/airflow/project
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        requests>=2.31
+        pydantic>=2.0
+        pydantic-settings>=2.0
+        python-dotenv>=1.0
+        google-cloud-storage>=2.10
+        google-cloud-bigquery>=3.11
+        google-cloud-secret-manager>=2.16
     command: scheduler
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]

@@ -189,7 +189,7 @@ resource "google_secret_manager_secret" "emt_password" {
 
 resource "google_compute_instance" "airflow" {
   name         = "bicimad-airflow"
-  machine_type = "e2-small"
+  machine_type = "e2-medium"
   zone         = "${var.region}-b"
 
   tags = ["airflow", "http-server"]
@@ -219,7 +219,7 @@ resource "google_compute_instance" "airflow" {
       --wait /bin/true 2>/dev/null || true
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
     apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg git
+    apt-get install -y -qq ca-certificates curl gnupg git make
     # Docker official repo (docker-compose-plugin not in Debian default repos)
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/debian/gpg \
