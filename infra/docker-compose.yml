@@ -9,7 +9,9 @@
 # from src/ without reinstalling the package on every container restart.
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.3
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
   env_file:
     - airflow.env
   environment:
@@ -49,16 +51,6 @@ services:
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
-    environment:
-      PYTHONPATH: /opt/airflow/project
-      _PIP_ADDITIONAL_REQUIREMENTS: >-
-        requests>=2.31
-        pydantic>=2.0
-        pydantic-settings>=2.0
-        python-dotenv>=1.0
-        google-cloud-storage>=2.10
-        google-cloud-bigquery>=3.11
-        google-cloud-secret-manager>=2.16
     command: bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true"
     restart: "no"
 
@@ -88,16 +80,6 @@ services:
   # --------------------------------------------------------------------------
   airflow-scheduler:
     <<: *airflow-common
-    environment:
-      PYTHONPATH: /opt/airflow/project
-      _PIP_ADDITIONAL_REQUIREMENTS: >-
-        requests>=2.31
-        pydantic>=2.0
-        pydantic-settings>=2.0
-        python-dotenv>=1.0
-        google-cloud-storage>=2.10
-        google-cloud-bigquery>=3.11
-        google-cloud-secret-manager>=2.16
     command: scheduler
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
