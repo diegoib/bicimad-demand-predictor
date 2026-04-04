@@ -181,7 +181,8 @@ def login() -> str:
             )
             response.raise_for_status()
             body = response.json()
-            if body.get("code") != "00":
+            # '00' = new token issued, '01' = existing token extended (both valid)
+            if body.get("code") not in ("00", "01"):
                 raise ValueError(
                     f"Login rejected by API: code={body.get('code')!r} "
                     f"description={body.get('description')!r}"
