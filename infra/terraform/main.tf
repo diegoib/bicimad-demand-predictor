@@ -184,7 +184,7 @@ resource "google_secret_manager_secret" "emt_password" {
 #   echo -n "yourpassword"   | gcloud secrets versions add bicimad-emt-password --data-file=-
 
 # ---------------------------------------------------------------------------
-# Airflow VM — e2-small
+# Airflow VM — e2-medium
 # ---------------------------------------------------------------------------
 
 resource "google_compute_instance" "airflow" {

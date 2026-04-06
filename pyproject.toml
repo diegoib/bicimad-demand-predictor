@@ -12,6 +12,8 @@ dependencies = [
     "pydantic-settings>=2.0",
     "requests>=2.31",
     "python-dateutil>=2.8",
+    "polars>=0.19",
+    "holidays>=0.45",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +24,6 @@ ingestion = [
 ]
 features = [
     "pandas>=2.1",
-    "polars>=0.19",
     "duckdb>=0.9",
 ]
 training = [
@@ -37,6 +38,11 @@ serving = [
 monitoring = [
     "evidently>=0.4",
 ]
+notebooks = [
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "jupyter>=1.0",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -47,7 +53,7 @@ dev = [
     "types-python-dateutil>=2.8",
 ]
 all = [
-    "bicimad-demand-predictor[ingestion,features,training,serving,monitoring,dev]",
+    "bicimad-demand-predictor[ingestion,features,training,serving,monitoring,notebooks,dev]",
 ]
 
 [tool.setuptools.packages.find]

@@ -24,7 +24,7 @@ Sistema batch de ML para predecir disponibilidad de bicis en estaciones BiciMAD 
 - `dags/ingestion_dag.py`: schedule `*/15 * * * *`, un `PythonOperator` que llama `ingest()`, 3 reintentos con backoff exponencial.
 
 **Fase 7 (parcial) — GCP Infra** ✅
-- `infra/terraform/`: GCS bucket con lifecycle 1 año, BigQuery dataset `bicimad` + tabla `station_status_raw` con schema explícito y partición diaria, VM e2-small con Docker preinstalado, service account `bicimad-ingestion` con permisos mínimos, Secret Manager secrets `bicimad-emt-email` y `bicimad-emt-password`.
+- `infra/terraform/`: GCS bucket con lifecycle 1 año, BigQuery dataset `bicimad` + tabla `station_status_raw` con schema explícito y partición diaria, VM e2-medium con Docker preinstalado, service account `bicimad-ingestion` con permisos mínimos, Secret Manager secrets `bicimad-emt-email` y `bicimad-emt-password`.
 
 ---
 

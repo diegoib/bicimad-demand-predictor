@@ -75,13 +75,13 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 ## Fase 2: Feature engineering
 
-- [ ] **2.1** Crear `src/features/feature_definitions.py`:
-  - Diccionario/Enum con las 29 features definidas en el design doc, organizadas por grupo
+- [x] **2.1** Crear `src/features/feature_definitions.py`:
+  - ~~Diccionario/Enum~~ Pydantic BaseModel (frozen) con las 35 features organizadas por grupo
   - Cada feature tiene: nombre, tipo (int/float/bool/cat), grupo (lag/temporal/meteo/stats/static), descripción
-- [ ] **2.2** Crear `src/features/holidays.py`:
-  - Lista de festivos nacionales y de la Comunidad de Madrid (2024-2027)
+- [x] **2.2** Crear `src/features/holidays.py`:
+  - ~~Lista hardcodeada~~ Librería `holidays` (Spain prov="MD") + Nov 9 (Almudena) manual
   - Función `is_holiday(date) -> bool`
-- [ ] **2.3** Crear `src/features/build_features.py`:
+- [x] **2.3** Crear `src/features/build_features.py`:
   - Función `build_lag_features(df) -> df`: dock_bikes_now, free_bases_now, occupancy_rate_now, lags (15m, 30m, 1h), delta_15m
   - Función `build_temporal_features(df) -> df`: hour_of_day, day_of_week, is_weekend, month, is_holiday, minutes_since_midnight, is_rush_hour
   - Función `build_weather_features(df) -> df`:
@@ -91,15 +91,16 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Función `build_historical_features(df) -> df`: avg_dock_same_hour_7d, std_dock_same_hour_7d, avg_dock_same_weekday, station_daily_turnover, dock_bikes_same_time_1w
   - Función `build_station_features(df) -> df`: total_bases, station_id, latitude, longitude, distrito
   - Función principal `build_all_features(raw_df) -> df`: compone todas las anteriores y añade el target (dock_bikes en t+60min)
-- [ ] **2.4** Crear `src/features/build_dataset.py`:
+  - **Librería: Polars** (no pandas)
+- [x] **2.4** Crear `src/features/build_dataset.py`:
   - Función `build_training_dataset(source, start_date, end_date) -> DataFrame`: lee datos crudos, aplica build_all_features, elimina filas con NaN en el target
   - Soporte para fuente local (archivos JSON) y BigQuery
-- [ ] **2.5** Crear tests:
-  - `tests/test_features/test_build_features.py`: datos sintéticos con resultados conocidos
+- [x] **2.5** Crear tests:
+  - `tests/test_features/test_build_features.py`: datos sintéticos con resultados conocidos (61 tests)
   - Verificar que lag features se calculan correctamente (no data leakage)
   - Verificar que el target se alinea correctamente (dock_bikes de 60min en el futuro)
   - Verificar que features temporales son correctas para fechas conocidas
-- [ ] **2.6** Crear notebook de exploración `notebooks/01_eda_features.ipynb`:
+- [x] **2.6** Crear notebook de exploración `notebooks/01_eda_features.ipynb`:
   - Distribución de features por grupo
   - Correlación features vs target
   - Patrones temporales (hora del día, día de semana)
@@ -112,7 +113,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 ## Fase 3: Entrenamiento
 
 - [ ] **3.1** Crear `src/training/split.py`:
-  - Función `temporal_split(df, val_days=14, test_days=7) -> (train_df, val_df, test_df)`
+  - Función `temporal_split(df, train_days=7, val_days=1) -> (train_df, val_df)`
   - Validar que no hay overlap temporal entre splits
   - Log: fechas de cada split y número de filas
 - [ ] **3.2** Crear `src/training/train.py`:
@@ -183,12 +184,21 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - XCom con `stations_count` y `ingest_timestamp` para observabilidad
 - [ ] **5.3** Crear `dags/training_dag.py`:
   - Schedule: semanal (domingo 03:00)
-  - Tasks: build_dataset → split → train → evaluate → compare_with_previous → register_model → drift_report
+  - Task 1: `CloudRunExecuteJobOperator` → lanza Cloud Run Job de entrenamiento
+  - El job ejecuta: build_dataset → split → train → evaluate → compare_with_previous → register_model → drift_report
   - Condicional: solo registrar modelo si mejora al anterior
-- [ ] **5.4** Probar localmente: `make airflow-up`, verificar que los DAGs aparecen en el UI y se ejecutan correctamente
-- [ ] **5.5** Documentar el setup de Airflow en la VM e2-small de GCP
+  - El entrenamiento corre en Cloud Run Jobs (no en la VM) para no competir con Airflow por RAM
+- [ ] **5.4** Crear `infra/training/Dockerfile`:
+  - Imagen ligera (python:3.11-slim) solo con dependencias de training (polars, lightgbm, optuna, google-cloud-bigquery, google-cloud-storage)
+  - Entrypoint: `python -m src.training.train`
+- [ ] **5.5** Crear Cloud Run Job en GCP (`gcloud run jobs create` o Terraform):
+  - Imagen: imagen Docker del paso anterior publicada en Artifact Registry
+  - Región: la misma que la VM
+  - Variables de entorno: mismas que la VM (bucket, BQ dataset, project)
+- [ ] **5.6** Probar localmente: `make airflow-up`, verificar que los DAGs aparecen en el UI y se ejecutan correctamente
+- [ ] **5.7** Documentar el setup de Airflow en la VM e2-medium de GCP
 
-**Done cuando:** Airflow ejecuta ambos DAGs correctamente en local. El DAG de ingesta escribe datos cada 15 min y el de training produce un modelo versionado.
+**Done cuando:** Airflow ejecuta ambos DAGs correctamente. El DAG de ingesta escribe datos cada 15 min; el DAG de training dispara un Cloud Run Job que produce un modelo versionado en GCS.
 
 ---
 
@@ -215,7 +225,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 ## Fase 7: Despliegue en GCP
 
 - [x] **7.1** Crear `infra/terraform/` con los recursos GCP:
-  - VM e2-small (Airflow) con startup script (Docker + Docker Compose)
+  - VM e2-medium (Airflow) con startup script (Docker + Docker Compose)
   - Cloud Storage bucket con lifecycle rule (borrar tras 365 días)
   - BigQuery dataset + tabla `station_status_raw` con schema explícito y partición diaria
   - Secret Manager secrets `bicimad-emt-email` y `bicimad-emt-password`
@@ -223,7 +233,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 - [ ] **7.2** Configurar GitHub Actions:
   - CI: lint + tests en cada PR
   - CD: deploy de Cloud Function y actualización de DAGs en la VM
-- [ ] **7.3** Deploy de Airflow en la VM e2-small
+- [ ] **7.3** Deploy de Airflow en la VM e2-medium
 - [ ] **7.4** Verificar que todo funciona end-to-end en GCP
 - [ ] **7.5** Documentar runbook: cómo desplegar, cómo recuperarse de fallos, cómo forzar reentrenamiento
 

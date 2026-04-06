@@ -119,7 +119,8 @@ make airflow-down   # Parar Airflow
 - LightGBM como modelo principal (no deep learning, no Prophet).
 - Modelo global (no un modelo por estación).
 - Target: dock_bikes absoluto, no tasa de ocupación ni clasificación.
-- Airflow self-hosted en VM e2-small (no Cloud Composer, demasiado caro).
+- Airflow self-hosted en VM e2-medium (no Cloud Composer, demasiado caro).
+- Entrenamiento del modelo en Cloud Run Jobs (no en la VM de Airflow — RAM limitada). El DAG de training dispara el job vía `CloudRunExecuteJobOperator`.
 - Horizonte inicial: t+1h (ampliable después).
 - Snapshots cada 15 minutos.
 
