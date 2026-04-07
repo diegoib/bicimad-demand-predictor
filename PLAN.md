@@ -112,35 +112,32 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 ## Fase 3: Entrenamiento
 
-- [ ] **3.1** Crear `src/training/split.py`:
-  - Función `temporal_split(df, train_days=7, val_days=1) -> (train_df, val_df)`
-  - Validar que no hay overlap temporal entre splits
-  - Log: fechas de cada split y número de filas
-- [ ] **3.2** Crear `src/training/train.py`:
-  - Función `train_model(train_df, val_df, feature_cols, target_col) -> lgb.Booster`
-  - Configurar LightGBM con station_id como feature categórica
-  - Función `train_with_optuna(train_df, val_df, n_trials) -> (best_params, best_model)`
-  - Guardar modelo como archivo .txt (LightGBM nativo) y como .pkl (sklearn wrapper)
-- [ ] **3.3** Crear `src/training/evaluate.py`:
-  - Función `evaluate(model, test_df) -> dict` que calcula: MAE, RMSE, MAE normalizado, mejora vs baseline naive
-  - Función `evaluate_critical_states(model, test_df) -> dict`: precisión en predecir estaciones vacías/llenas
-  - Función `generate_report(metrics, output_path)`: genera un JSON con todas las métricas y metadata
-- [ ] **3.4** Crear `src/training/baseline.py`:
-  - Función `naive_baseline(test_df) -> dict`: predice dock_bikes(t+1h) = dock_bikes(t) y calcula MAE/RMSE
-  - Esto es la referencia mínima que el modelo debe superar
-- [ ] **3.5** Crear `src/training/registry.py`:
-  - Función `save_model(model, metrics, version, gcs_bucket)`: guarda modelo + métricas en GCS con versionado
-  - Función `load_latest_model(gcs_bucket) -> (model, metadata)`
-  - Versionado: `models/v{YYYYMMDD_HHMMSS}/model.txt` + `metadata.json`
-- [ ] **3.6** Crear tests:
-  - `tests/test_training/test_split.py`: verificar que splits no solapan y están ordenados temporalmente
-  - `tests/test_training/test_train.py`: entrenar con datos sintéticos pequeños, verificar que produce un modelo válido
-  - `tests/test_training/test_evaluate.py`: métricas con predicciones conocidas
-- [ ] **3.7** Crear notebook `notebooks/02_first_model.ipynb`:
-  - Entrenar primer modelo con datos acumulados
-  - Comparar con baseline naive
-  - Feature importance
-  - Análisis de errores por estación, hora, y condiciones meteorológicas
+- [x] **3.1** Crear `src/training/split.py`:
+  - `temporal_split(df, train_days=28, val_days=1, test_days=1) -> (train_df, val_df, test_df)`
+  - Warn (no error) si train < train_days — permite empezar con 7 días mientras se acumulan datos
+  - Log: fechas y filas de cada split
+- [x] **3.2** Crear `src/training/train.py`:
+  - `train_model(train_df, val_df, ...) -> lgb.Booster` con early stopping en val
+  - `train_with_optuna(train_df, val_df, n_trials) -> (best_params, best_model)`
+  - station_id y distrito como features categóricas; booleans casteados a Int8
+  - `__main__`: args --source, --train-days, --optuna, --n-trials, --output-dir
+- [x] **3.3** Crear `src/training/evaluate.py`:
+  - `evaluate(model, df) -> dict`: MAE, RMSE, R², MAE normalizado, mejora vs baseline
+  - `evaluate_critical_states(model, df) -> dict`: precisión/recall de estaciones vacías/llenas
+  - `generate_report(metrics, output_path, model)`: JSON con métricas, timestamp, num_trees
+- [x] **3.4** Crear `src/training/baseline.py`:
+  - `naive_baseline(df) -> dict`: predice dock_bikes_now como target; calcula MAE/RMSE
+- [x] **3.5** Crear `src/training/registry.py`:
+  - `save_model(model, metrics, output_dir)`: versión v{YYYYMMDD_HHMMSS}/, model.txt + metadata.json
+  - `load_latest_model(model_dir)`: carga la versión más reciente
+  - En prod (settings.env=="prod"): también sube/descarga desde GCS
+- [x] **3.6** Crear tests (141 tests totales, todos pasan):
+  - `tests/test_training/test_split.py`: 9 tests de no-overlap, tamaños, warnings, errores
+  - `tests/test_training/test_train.py`: 9 tests de _prepare_features, train_model, train_with_optuna
+  - `tests/test_training/test_evaluate.py`: 17 tests de baseline, evaluate, critical_states, report
+  - `tests/test_training/test_registry.py`: 8 tests de save/load model
+- [x] **3.7** Crear notebook `notebooks/02_first_model.ipynb`:
+  - 8 celdas: load dataset, split, baseline, train LightGBM, evaluar en test, feature importance, MAE por hora, guardar modelo
 
 **Done cuando:** el pipeline train → evaluate produce un modelo LightGBM con métricas documentadas que supera el baseline naive. El modelo se puede guardar y cargar desde disco/GCS.
 

@@ -66,7 +66,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+ignore = ["E501", "N806"]  # N806: uppercase X is standard ML convention for feature matrix
 
 [tool.mypy]
 python_version = "3.11"
