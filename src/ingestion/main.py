@@ -48,7 +48,12 @@ def ingest() -> dict[str, Any]:
     # 2. Fetch data
     # ------------------------------------------------------------------
     stations_response = fetch_stations(access_token)
-    weather = fetch_current_weather()
+
+    try:
+        weather = fetch_current_weather()
+    except Exception as exc:
+        logger.warning("Open-Meteo unavailable, weather will be null: %s", exc)
+        weather = None
 
     logger.info("Fetched %d stations", len(stations_response.data))
 
@@ -58,7 +63,7 @@ def ingest() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ingestion_timestamp": timestamp.isoformat(),
         "stations": stations_response.model_dump(mode="json"),
-        "weather": weather.model_dump(mode="json"),
+        "weather": weather.model_dump(mode="json") if weather is not None else None,
     }
 
     # ------------------------------------------------------------------
@@ -71,7 +76,7 @@ def ingest() -> dict[str, Any]:
 
         # Flatten station rows for BigQuery streaming insert
         rows: list[dict[str, Any]] = []
-        weather_dict = weather.model_dump(mode="json")
+        weather_dict = weather.model_dump(mode="json") if weather is not None else None
         for station in stations_response.data:
             row = station.model_dump(mode="json")
             row["ingestion_timestamp"] = timestamp.isoformat()
@@ -84,6 +89,7 @@ def ingest() -> dict[str, Any]:
         "status": "ok",
         "stations": len(stations_response.data),
         "timestamp": timestamp.isoformat(),
+        "weather_available": weather is not None,
     }
     logger.info("Ingestion cycle complete: %s", result)
     return result
