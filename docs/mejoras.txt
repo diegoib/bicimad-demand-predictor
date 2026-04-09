@@ -1,2 +1,3 @@
 - ahora solo se tiene el estado del tiempo actual, habría que incluir la previsión del tiempo para el label (1 hora después por ejemplo)
 - que el label sea 30m después en vez de 1h
+- quitar toda la parte de desarrollo en local, las funciones solo deberían funcionar para prod, no para dev (lo hace todo más complicado)

@@ -5,7 +5,7 @@ single ``ingest()`` function that can be called:
 
 - By Airflow (imported and called from a DAG task).
 - As a Cloud Function entry point via ``handler(request)``.
-- Directly from the command line for local testing.
+- Directly from the command line.
 """
 
 import json
@@ -15,7 +15,7 @@ from typing import Any
 from src.common.config import settings
 from src.common.logging_setup import get_logger, setup_logging
 from src.ingestion.bicimad_client import TokenCache, fetch_stations, get_valid_token
-from src.ingestion.storage import load_to_bigquery, write_raw_to_gcs, write_raw_to_local
+from src.ingestion.storage import load_to_bigquery, write_raw_to_gcs
 from src.ingestion.weather_client import fetch_current_weather
 
 logger = get_logger(__name__)
@@ -24,8 +24,7 @@ logger = get_logger(__name__)
 def ingest() -> dict[str, Any]:
     """Run one ingestion cycle: authenticate → fetch → validate → write.
 
-    In dev mode (``BICIMAD_ENV=dev``) data is written to local files under
-    ``local_data_dir``.  In prod mode data goes to GCS and BigQuery.
+    Writes raw snapshots to GCS and flattened station rows to BigQuery.
 
     Returns:
         Summary dict with ``status``, ``stations`` count and ``timestamp``.
@@ -33,15 +32,15 @@ def ingest() -> dict[str, Any]:
     Raises:
         Exception: Propagates any unhandled error from the sub-components.
     """
-    setup_logging(settings.env)
-    logger.info("Starting ingestion cycle (env=%s)", settings.env)
+    setup_logging()
+    logger.info("Starting ingestion cycle")
 
     timestamp = datetime.now(tz=UTC)
 
     # ------------------------------------------------------------------
-    # 1. Authenticate
+    # 1. Authenticate (token cached on disk — survives between Airflow runs)
     # ------------------------------------------------------------------
-    cache = TokenCache() if settings.env == "dev" else None
+    cache = TokenCache()
     access_token = get_valid_token(cache)
 
     # ------------------------------------------------------------------
@@ -67,23 +66,19 @@ def ingest() -> dict[str, Any]:
     }
 
     # ------------------------------------------------------------------
-    # 4. Write
+    # 4. Write to GCS + BigQuery
     # ------------------------------------------------------------------
-    if settings.env == "dev":
-        write_raw_to_local(payload, settings.local_data_dir, timestamp)
-    else:
-        write_raw_to_gcs(payload, settings.gcs_bucket, "raw", timestamp)
+    write_raw_to_gcs(payload, settings.gcs_bucket, "raw", timestamp)
 
-        # Flatten station rows for BigQuery streaming insert
-        rows: list[dict[str, Any]] = []
-        weather_dict = weather.model_dump(mode="json") if weather is not None else None
-        for station in stations_response.data:
-            row = station.model_dump(mode="json")
-            row["ingestion_timestamp"] = timestamp.isoformat()
-            row["weather_snapshot"] = weather_dict
-            rows.append(row)
+    rows: list[dict[str, Any]] = []
+    weather_dict = weather.model_dump(mode="json") if weather is not None else None
+    for station in stations_response.data:
+        row = station.model_dump(mode="json")
+        row["ingestion_timestamp"] = timestamp.isoformat()
+        row["weather_snapshot"] = weather_dict
+        rows.append(row)
 
-        load_to_bigquery(rows, settings.bq_project, settings.bq_dataset, "station_status_raw")
+    load_to_bigquery(rows, settings.bq_project, settings.bq_dataset, "station_status_raw")
 
     result: dict[str, Any] = {
         "status": "ok",

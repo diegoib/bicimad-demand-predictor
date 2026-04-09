@@ -17,14 +17,14 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - monitoring: evidently
   - dev: pytest, ruff, mypy, pre-commit
 - [x] **0.3** Crear `Makefile` con los comandos listados en CLAUDE.md
-- [x] **0.4** Crear `src/common/config.py` con Pydantic Settings (BICIMAD_ENV, BICIMAD_GCS_BUCKET, BICIMAD_BQ_DATASET, BICIMAD_EMT_EMAIL, BICIMAD_EMT_PASSWORD)
+- [x] **0.4** Crear `src/common/config.py` con Pydantic Settings (BICIMAD_GCS_BUCKET, BICIMAD_BQ_DATASET, BICIMAD_BQ_PROJECT, BICIMAD_MODEL_VERSION)
 - [x] **0.5** Crear `src/common/schemas.py` con los modelos Pydantic:
   - `StationSnapshot`: un registro de estación de la API (dock_bikes, free_bases, total_bases, geometry, id, number, name, activate, no_available)
   - `BicimadApiResponse`: la respuesta completa de la API (code, description, datetime, data: list[StationSnapshot])
   - `WeatherSnapshot`: datos meteorológicos de Open-Meteo (temperature_2m, precipitation, wind_speed_10m, weather_code, timestamp)
   - `FeatureRow`: una fila del dataset de entrenamiento (todas las features + target)
   - `PredictionOutput`: respuesta de la API de serving (station_id, predicted_dock_bikes, prediction_time, model_version)
-- [x] **0.6** Crear `src/common/logging_setup.py` con configuración de logging estructurado (JSON en prod, texto en dev)
+- [x] **0.6** Crear `src/common/logging_setup.py` con configuración de logging estructurado (siempre JSON para Cloud Logging)
 - [x] **0.7** Crear `.gitignore`, `README.md` (en español, breve), `.pre-commit-config.yaml`
 - [x] **0.8** Ejecutar `make lint` y `make test` (aunque no haya tests reales aún, verificar que el setup funciona)
 
@@ -36,14 +36,11 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 - [x] **1.1** Crear `src/ingestion/bicimad_client.py`:
   - Función `login() -> str` que llama a `GET /v2/mobilitylabs/user/login/` con `email` y `password` como **headers HTTP** (no en el body).
-  - Credenciales **nunca en `Settings`** — son secrets sensibles:
-    - Dev local: leer directamente con `os.environ["BICIMAD_EMT_EMAIL"]` / `os.environ["BICIMAD_EMT_PASSWORD"]` desde `.env` (gitignoreado).
-    - Producción: leer desde **Google Secret Manager** con `google-cloud-secret-manager`.
-    - Función helper `get_emt_credentials() -> tuple[str, str]` que detecta el entorno (`BICIMAD_ENV`) y usa el mecanismo correcto.
+  - Credenciales siempre desde **Google Secret Manager** (`bicimad-emt-email`, `bicimad-emt-password`). Dev usa ADC contra `bicimad-dev`.
   - El `accessToken` expira en **24 horas**. Implementar `TokenCache`:
-    - En local: persiste en `data/.token_cache.json` con el token y su `issued_at` timestamp.
-    - En Cloud Function: regenerar en cada invocación (se llama cada 15 min, overhead mínimo).
-    - Método `get_valid_token() -> str`: lee cache, valida antigüedad < 24h; si no, llama a `login()` y actualiza cache.
+    - Persiste en `/tmp/.bicimad_token_cache.json` (configurable via `BICIMAD_TOKEN_CACHE_PATH`).
+    - Apropiado para Airflow en VM e2-medium (disco persistente entre ejecuciones del DAG).
+    - Método `get_valid_token() -> str`: lee cache, valida antigüedad < 23h; si no, llama a `login()` y actualiza cache.
   - Función `fetch_stations(access_token: str) -> BicimadApiResponse` que llama a `GET /v2/transport/bicimad/stations/`
   - Manejo de errores: reintentos con backoff exponencial (3 intentos), validación del código de respuesta ("00" = ok)
 - [x] **1.2** Crear `src/ingestion/weather_client.py`:
@@ -54,7 +51,6 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Extraer la hora actual del forecast (no todo el array de 7 días)
 - [x] **1.3** Crear `src/ingestion/storage.py`:
   - Función `write_raw_to_gcs(data, bucket, prefix, timestamp)` que escribe JSON a GCS particionado
-  - Función `write_raw_to_local(data, base_path, timestamp)` para modo local (dev)
   - Función `load_to_bigquery(data, dataset, table)` para carga incremental
   - Particionado: `station_status/dt=YYYY-MM-DD/hh=HH/mm=MM.json`
 - [x] **1.4** Crear `src/ingestion/main.py`:
@@ -66,10 +62,10 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - `tests/test_ingestion/test_weather_client.py`: mock de Open-Meteo
   - `tests/test_ingestion/test_storage.py`: verificar escritura local y formato de particionado
   - Fixture con un JSON de ejemplo real de la API (usar el extracto del design doc)
-- [x] **1.6** Probar ingesta real en local: ejecutar `make ingest-local` y verificar que se escriben archivos JSON correctos en `data/raw/`
+- [x] **1.6** Probar ingesta real: ejecutar `python -m src.ingestion.main` y verificar que los datos llegan a GCS y BigQuery
 - [x] **1.7** Documentar en README cómo configurar las credenciales de EMT
 
-**Done cuando:** `make ingest-local` descarga datos reales de BiciMAD y Open-Meteo, los valida con Pydantic, y los escribe en `data/raw/` con el particionado correcto. `make test` pasa todos los tests de ingesta.
+**Done cuando:** `python -m src.ingestion.main` descarga datos reales de BiciMAD y Open-Meteo, los valida con Pydantic, y los escribe en GCS y BigQuery con el particionado correcto. `make test` pasa todos los tests de ingesta.
 
 ---
 
@@ -93,8 +89,8 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Función principal `build_all_features(raw_df) -> df`: compone todas las anteriores y añade el target (dock_bikes en t+60min)
   - **Librería: Polars** (no pandas)
 - [x] **2.4** Crear `src/features/build_dataset.py`:
-  - Función `build_training_dataset(source, start_date, end_date) -> DataFrame`: lee datos crudos, aplica build_all_features, elimina filas con NaN en el target
-  - Soporte para fuente local (archivos JSON) y BigQuery
+  - Función `build_training_dataset(start_date, end_date) -> DataFrame`: lee datos de BigQuery, aplica build_all_features, elimina filas con NaN en el target
+  - Función `build_serving_dataset() -> DataFrame`: ídem sin filtrar el target nulo (filas de inferencia)
 - [x] **2.5** Crear tests:
   - `tests/test_features/test_build_features.py`: datos sintéticos con resultados conocidos (61 tests)
   - Verificar que lag features se calculan correctamente (no data leakage)
@@ -120,7 +116,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - `train_model(train_df, val_df, ...) -> lgb.Booster` con early stopping en val
   - `train_with_optuna(train_df, val_df, n_trials) -> (best_params, best_model)`
   - station_id y distrito como features categóricas; booleans casteados a Int8
-  - `__main__`: args --source, --train-days, --optuna, --n-trials, --output-dir
+  - `__main__`: args --train-days, --optuna, --n-trials, --output-dir
 - [x] **3.3** Crear `src/training/evaluate.py`:
   - `evaluate(model, df) -> dict`: MAE, RMSE, R², MAE normalizado, mejora vs baseline
   - `evaluate_critical_states(model, df) -> dict`: precisión/recall de estaciones vacías/llenas
@@ -130,7 +126,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 - [x] **3.5** Crear `src/training/registry.py`:
   - `save_model(model, metrics, output_dir)`: versión v{YYYYMMDD_HHMMSS}/, model.txt + metadata.json
   - `load_latest_model(model_dir)`: carga la versión más reciente
-  - En prod (settings.env=="prod"): también sube/descarga desde GCS
+  - Siempre sube a GCS tras guardar; descarga desde GCS si el directorio local está vacío
 - [x] **3.6** Crear tests (141 tests totales, todos pasan):
   - `tests/test_training/test_split.py`: 9 tests de no-overlap, tamaños, warnings, errores
   - `tests/test_training/test_train.py`: 9 tests de _prepare_features, train_model, train_with_optuna
@@ -145,23 +141,25 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 ## Fase 4: Serving
 
-- [ ] **4.1** Crear `src/serving/model_loader.py`:
+- [x] **4.1** Crear `src/serving/model_loader.py`:
   - Clase `ModelManager` que carga el modelo desde GCS (o local) y lo cachea
   - Método `reload()` para recargar si hay nueva versión
   - Thread-safe para uso con FastAPI
-- [ ] **4.2** Crear `src/serving/app.py`:
-  - `GET /health`: healthcheck
-  - `GET /predict/{station_id}`: predicción para una estación (genera features en real-time, predice)
+  - `prepare_serving_features()`: convierte Polars DataFrame → pandas X sin filtrar target nulo
+- [x] **4.2** Crear `src/serving/app.py`:
+  - `GET /health`: healthcheck (siempre 200)
+  - `GET /predict/{station_id}`: predicción para una estación desde cache en memoria
   - `GET /predict/all`: predicción batch para todas las estaciones
   - `GET /model/info`: versión del modelo, métricas, fecha de entrenamiento
-  - Usar `src/features/build_features.py` para generar features (mismo código que training)
-- [ ] **4.3** Crear `src/serving/Dockerfile`:
+  - `POST /model/reload`: recarga modelo + cache (llamado por el DAG de training)
+  - Cache: al arrancar carga `build_serving_dataset()` y guarda una fila por estación en memoria
+- [x] **4.3** Crear `src/serving/Dockerfile`:
   - Imagen ligera (python:3.11-slim)
-  - Solo dependencias de serving (no training, no airflow)
-- [ ] **4.4** Crear tests:
-  - `tests/test_serving/test_app.py`: tests con TestClient de FastAPI
-  - Verificar que el endpoint devuelve PredictionOutput válido
-  - Verificar que features generadas en serving son idénticas a las de training (anti training-serving skew)
+  - Solo dependencias de serving: fastapi, uvicorn, lightgbm, polars, pandas, pydantic, holidays, google-cloud-storage
+- [x] **4.4** Crear tests (19 tests, todos pasan — 160 totales):
+  - `tests/test_serving/test_app.py`: TestClient + monkeypatch para inyectar estado
+  - Cubre: health, model info, predict single/batch, reload, 404/503, schema, prediction_time = snapshot+1h
+  - `src/features/build_dataset.py`: añadido `build_serving_dataset()` (sin filtro de target nulo)
 - [ ] **4.5** Probar localmente: `make serve` y llamar a los endpoints con curl
 
 **Done cuando:** `make serve` levanta la API, `curl localhost:8000/predict/39` devuelve una predicción válida usando el mismo pipeline de features que el training.
@@ -194,8 +192,45 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Variables de entorno: mismas que la VM (bucket, BQ dataset, project)
 - [ ] **5.6** Probar localmente: `make airflow-up`, verificar que los DAGs aparecen en el UI y se ejecutan correctamente
 - [ ] **5.7** Documentar el setup de Airflow en la VM e2-medium de GCP
+- [ ] **5.8** Añadir schemas de predicción a `src/common/schemas.py`:
+  - `BatchPredictionRow`: `station_id`, `prediction_made_at` (T), `target_time` (T+60), `predicted_dock_bikes`, `model_version`
+  - `PredictionError`: `station_id`, `prediction_made_at` (T-60), `target_time` (T), `predicted_dock_bikes`, `actual_dock_bikes`, `absolute_error`, `squared_error`, `model_version`, `reconciled_at`
+- [ ] **5.9** Crear `src/serving/predict.py`:
+  - `predict_all_stations(model, model_version, stations_response, weather, snapshot_timestamp, feature_cols=None) -> list[BatchPredictionRow]`
+    - Solo estaciones activas (`activate==1` y `no_available==0`)
+    - Llama a `build_all_features()` de `src.features.build_features` y a `_prepare_features()` de `src.training.train` (mismo código que training — cero training-serving skew)
+    - `target_time = snapshot_timestamp + timedelta(hours=1)`
+  - `_raw_snapshot_to_polars(stations_response, weather, snapshot_timestamp) -> pl.DataFrame` (privada)
+    - Produce exactamente las mismas columnas que `_load_json_file` en `build_dataset.py`
+    - Si `weather` es `None`, rellena columnas meteorológicas con centinelas (0.0/0/False)
+- [ ] **5.10** Crear `src/monitoring/reconcile.py`:
+  - `reconcile_predictions_local(current_snapshot, snapshot_timestamp, predictions_path) -> list[PredictionError] | None`
+    - Dev: lee JSONL de `{predictions_path}/predictions/dt=.../hh=.../mm=MM.jsonl` para `snapshot_timestamp - 60min`
+    - Retorna `None` si no existe el fichero (primera hora de operación)
+  - `reconcile_predictions(current_snapshot, snapshot_timestamp, bq_project, bq_dataset) -> list[PredictionError] | None`
+    - Prod: consulta BQ tabla `predictions` donde `target_time == snapshot_timestamp`; retorna `None` si no hay filas
+  - `compute_cycle_mae(errors: list[PredictionError]) -> float` — media de `absolute_error`; `ValueError` si lista vacía
+- [ ] **5.11** Extender `src/ingestion/storage.py` con 4 funciones nuevas (sin modificar las existentes):
+  - `write_predictions_to_local(predictions, base_path, snapshot_timestamp) -> Path` → `predictions/dt=.../hh=.../mm=MM.jsonl`
+  - `write_prediction_errors_to_local(errors, base_path, snapshot_timestamp) -> Path` → `prediction_errors/dt=.../hh=.../mm=MM.jsonl`
+  - `load_predictions_to_bigquery(predictions, project, dataset) -> int` — streaming insert tabla `predictions`
+  - `load_prediction_errors_to_bigquery(errors, project, dataset) -> int` — streaming insert tabla `prediction_errors`
+- [ ] **5.12** Extender `src/ingestion/main.py`: añadir fases predict + reconcile al final de `ingest()`:
+  - Cache lazy del modelo a nivel de módulo: `_model_cache: tuple[lgb.Booster, dict] | None = None` + `_get_model()`
+  - **Fase predict** (try/except no fatal): `_get_model()` → `predict_all_stations()` → `write_predictions_to_local` o `load_predictions_to_bigquery`
+  - **Fase reconcile** (try/except no fatal): `reconcile_predictions_local/_bq()` → si hay errores: `compute_cycle_mae()` + log + escritura
+  - Extender dict de retorno: `predictions_written`, `errors_reconciled`, `cycle_mae`
+  - El DAG de Airflow **no cambia** — toda la lógica vive en `ingest()`
+- [ ] **5.13** Crear tests:
+  - `tests/test_serving/test_predict.py`: columnas de `_raw_snapshot_to_polars` idénticas a `_load_json_file`, excluye inactivas, centinelas sin weather; `predict_all_stations`: N activas → N rows, `target_time = prediction_made_at + 1h`, valores finitos, mismos dtypes que training (anti-skew)
+  - `tests/test_monitoring/test_reconcile.py`: `compute_cycle_mae` (exacto, promedio, ValueError vacío); `reconcile_predictions_local` (None sin fichero, errores correctos, absolute/squared_error bien calculados, estaciones sin match se omiten)
+  - Extender `tests/test_ingestion/test_storage.py`: `TestWritePredictionsToLocal` y `TestWritePredictionErrorsToLocal` (ruta correcta, JSONL válido, crea directorios)
+- [ ] **5.14** Tablas BQ + vista SQL (en `infra/terraform/` o `bq mk`):
+  - Tabla `predictions`: partición en `prediction_made_at`, cluster por `station_id` — campos: `station_id INT`, `prediction_made_at TIMESTAMP`, `target_time TIMESTAMP`, `predicted_dock_bikes FLOAT`, `model_version STRING`
+  - Tabla `prediction_errors`: partición en `target_time`, cluster por `station_id` — campos anteriores + `actual_dock_bikes INT`, `absolute_error FLOAT`, `squared_error FLOAT`, `reconciled_at TIMESTAMP`
+  - Vista `infra/bq_views/v_online_mae.sql`: MAE/RMSE diario por `model_version` sobre `prediction_errors`
 
-**Done cuando:** Airflow ejecuta ambos DAGs correctamente. El DAG de ingesta escribe datos cada 15 min; el DAG de training dispara un Cloud Run Job que produce un modelo versionado en GCS.
+**Done cuando:** Airflow ejecuta ambos DAGs correctamente. El DAG de ingesta escribe datos cada 15 min; el DAG de training dispara un Cloud Run Job que produce un modelo versionado en GCS. A partir del segundo ciclo de ingesta, `ingest()` escribe predicciones y (60 min después) errores de reconciliación, logueando el MAE de ciclo.
 
 ---
 
@@ -206,7 +241,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Data drift + prediction drift
   - Guardar reporte HTML en GCS
 - [ ] **6.2** Crear `src/monitoring/alerts.py`:
-  - Función que compara MAE actual vs MAE del último entrenamiento
+  - Función que compara MAE online (últimas 24h desde vista `v_online_mae`) vs MAE del último entrenamiento (campo `mae` en `metadata.json` del modelo activo)
   - Si MAE sube >20%, disparar alerta (email o log)
   - Si drift significativo en features clave, disparar reentrenamiento adelantado
 - [ ] **6.3** Integrar en el DAG de training (task `generate_drift_report` ya planificado en 5.3)
@@ -215,7 +250,7 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Gráfico de MAE histórico
   - Última ejecución de ingesta y training
 
-**Done cuando:** cada entrenamiento semanal genera un reporte de drift y se comparan métricas automáticamente. Las alertas se disparan correctamente cuando se simula un aumento de error.
+**Done cuando:** cada entrenamiento semanal genera un reporte de drift y se comparan métricas automáticamente. Las alertas se disparan correctamente cuando se simula un aumento de error. El MAE online (vista `v_online_mae`) refleja el error real de predicción acumulado por el pipeline de ingesta.
 
 ---
 

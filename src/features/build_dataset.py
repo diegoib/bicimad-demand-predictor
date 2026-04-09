@@ -1,11 +1,10 @@
 """Build the training dataset from raw ingestion files.
 
-Reads raw JSON snapshots (local or BigQuery), flattens them into a per-station
+Reads raw station snapshots from BigQuery, flattens them into a per-station
 DataFrame, and applies the full feature engineering pipeline.
 
 Usage:
-    python -m src.features.build_dataset [--source local|bigquery]
-                                         [--start-date YYYY-MM-DD]
+    python -m src.features.build_dataset [--start-date YYYY-MM-DD]
                                          [--end-date YYYY-MM-DD]
                                          [--output PATH]
 """
@@ -89,48 +88,6 @@ def _load_json_file(path: Path) -> pl.DataFrame:
     return df
 
 
-def _load_local_snapshots(
-    data_dir: str,
-    start_date: date | None,
-    end_date: date | None,
-) -> pl.DataFrame:
-    """Load and concatenate all raw JSON snapshots from the local filesystem.
-
-    Args:
-        data_dir: Base directory containing station_status/dt=*/ partitions.
-        start_date: Inclusive start date filter (None = no lower bound).
-        end_date: Inclusive end date filter (None = no upper bound).
-
-    Returns:
-        Concatenated Polars DataFrame with all matching snapshots.
-    """
-    base = Path(data_dir) / "station_status"
-    json_files = sorted(base.glob("dt=*/hh=*/mm=*.json"))
-
-    if not json_files:
-        raise FileNotFoundError(f"No snapshot files found in {base}")
-
-    if start_date or end_date:
-        filtered = []
-        for p in json_files:
-            # Path format: .../dt=YYYY-MM-DD/hh=HH/mm=MM.json
-            dt_str = p.parent.parent.name  # "dt=YYYY-MM-DD"
-            file_date = date.fromisoformat(dt_str.removeprefix("dt="))
-            if start_date and file_date < start_date:
-                continue
-            if end_date and file_date > end_date:
-                continue
-            filtered.append(p)
-        json_files = filtered
-
-    if not json_files:
-        raise ValueError(f"No snapshot files found in [{start_date}, {end_date}] range")
-
-    logger.info("Loading %d snapshot files from %s", len(json_files), base)
-    frames = [_load_json_file(p) for p in json_files]
-    return pl.concat(frames)
-
-
 def _load_bigquery_snapshots(
     start_date: date | None,
     end_date: date | None,
@@ -147,7 +104,7 @@ def _load_bigquery_snapshots(
     try:
         from google.cloud import bigquery
     except ImportError as e:
-        raise ImportError("Install google-cloud-bigquery to use source='bigquery'") from e
+        raise ImportError("Install google-cloud-bigquery to load snapshots from BigQuery.") from e
 
     client = bigquery.Client(project=_settings.bq_project)
 
@@ -202,34 +159,23 @@ def _load_bigquery_snapshots(
 
 
 def build_training_dataset(
-    source: str = "local",
     start_date: date | None = None,
     end_date: date | None = None,
-    data_dir: str | None = None,
 ) -> pl.DataFrame:
     """Build a fully featured DataFrame ready for model training.
 
-    Loads raw snapshots, applies build_all_features, and removes rows with
-    a null training target (the last 4 rows per station per training window).
+    Loads raw snapshots from BigQuery, applies build_all_features, and removes
+    rows with a null training target (the last 4 rows per station).
 
     Args:
-        source: "local" (JSON files) or "bigquery".
         start_date: Inclusive start date filter.
         end_date: Inclusive end date filter.
-        data_dir: Override for the local data directory (default: from config).
 
     Returns:
         Polars DataFrame with 35 feature columns and target_dock_bikes_1h.
         All rows have a non-null target.
     """
-    effective_data_dir = data_dir or _settings.local_data_dir
-
-    if source == "local":
-        raw_df = _load_local_snapshots(effective_data_dir, start_date, end_date)
-    elif source == "bigquery":
-        raw_df = _load_bigquery_snapshots(start_date, end_date)
-    else:
-        raise ValueError(f"Unknown source: {source!r}. Use 'local' or 'bigquery'.")
+    raw_df = _load_bigquery_snapshots(start_date, end_date)
 
     # Filter inactive stations before feature engineering
     raw_df = raw_df.filter(pl.col("activate") == 1)
@@ -256,13 +202,36 @@ def build_training_dataset(
     return featured_df
 
 
+def build_serving_dataset() -> pl.DataFrame:
+    """Build a fully featured DataFrame for batch inference.
+
+    Same pipeline as build_training_dataset but does NOT drop rows with a null
+    target — the most recent rows per station always have a null target because
+    no future data exists yet, and those are exactly the rows we predict on.
+
+    Returns:
+        Polars DataFrame with all feature columns. target_dock_bikes_1h is null
+        for the latest snapshot rows (the rows used for inference).
+    """
+    raw_df = _load_bigquery_snapshots(None, None)
+
+    raw_df = raw_df.filter(pl.col("activate") == 1)
+
+    logger.info(
+        "Raw data for serving: %d rows, %d stations",
+        len(raw_df),
+        raw_df["station_id"].n_unique(),
+    )
+
+    return build_all_features(raw_df)
+
+
 if __name__ == "__main__":
     import argparse
 
     setup_logging()
 
     parser = argparse.ArgumentParser(description="Build BiciMAD feature dataset")
-    parser.add_argument("--source", default="local", choices=["local", "bigquery"])
     parser.add_argument("--start-date", default=None, help="YYYY-MM-DD")
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD")
     parser.add_argument("--output", default="data/features/training_dataset.parquet")
@@ -271,7 +240,7 @@ if __name__ == "__main__":
     start = date.fromisoformat(args.start_date) if args.start_date else None
     end = date.fromisoformat(args.end_date) if args.end_date else None
 
-    df = build_training_dataset(source=args.source, start_date=start, end_date=end)
+    df = build_training_dataset(start_date=start, end_date=end)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,7 +5,6 @@ When adding or modifying a feature, always update this file first.
 """
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -145,11 +144,13 @@ class FeatureRow(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PredictionOutput(BaseModel):
-    """Response from the serving API."""
+class BatchPredictionRow(BaseModel):
+    """One row of batch predictions written by the ingestion pipeline and served by the API."""
 
     station_id: int
+    prediction_made_at: datetime = Field(
+        description="Snapshot timestamp (t) — when the prediction was made"
+    )
+    target_time: datetime = Field(description="Time for which the prediction applies (t+1h)")
     predicted_dock_bikes: float
-    prediction_time: datetime = Field(description="Time for which the prediction applies (t+1h)")
     model_version: str
-    metadata: dict[str, Any] = Field(default_factory=dict)

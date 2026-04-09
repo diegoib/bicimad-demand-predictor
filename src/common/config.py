@@ -1,10 +1,9 @@
 """Application configuration using Pydantic Settings.
 
 All config is loaded from environment variables with the BICIMAD_ prefix.
-Environment: dev (local DuckDB) or prod (GCP BigQuery).
+Dev and prod both use GCP — dev uses a separate GCP project (e.g. bicimad-dev)
+with Application Default Credentials (gcloud auth application-default login).
 """
-
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,17 +19,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Environment
-    env: Literal["dev", "prod"] = "dev"
-
     # GCP
     gcs_bucket: str = "bicimad-data"
     bq_dataset: str = "bicimad"
     bq_project: str = ""
-
-    # Local paths (dev mode)
-    local_data_dir: str = "data/raw"
-    local_model_dir: str = "data/models"
 
     # Model
     model_version: str = "latest"

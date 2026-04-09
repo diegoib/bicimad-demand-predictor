@@ -1,8 +1,7 @@
 """Model versioning for BiciMAD demand forecasting.
 
 Saves and loads LightGBM models with metadata (metrics, features, timestamp).
-In dev mode (settings.env == "dev"): local disk only.
-In prod mode (settings.env == "prod"): local disk + GCS upload.
+Always uploads to GCS after saving, and downloads from GCS when no local model exists.
 
 Version format: v{YYYYMMDD_HHMMSS}
 Directory layout:
@@ -29,23 +28,25 @@ from src.training.train import ALL_FEATURE_COLS
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_MODEL_DIR = Path("/tmp/models")
+
+
 def save_model(
     model: lgb.Booster,
     metrics: dict[str, Any],
     output_dir: str | Path | None = None,
 ) -> Path:
-    """Save a trained LightGBM model and its metadata to disk (and GCS in prod).
+    """Save a trained LightGBM model and its metadata to disk and GCS.
 
     Args:
         model: Trained LightGBM Booster.
         metrics: Evaluation metrics dict (from `evaluate`).
-        output_dir: Local directory for model storage.
-            Defaults to `settings.local_model_dir`.
+        output_dir: Local directory for model storage. Defaults to /tmp/models.
 
     Returns:
         Path to the version directory containing model.txt and metadata.json.
     """
-    base_dir = Path(output_dir) if output_dir is not None else Path(_settings.local_model_dir)
+    base_dir = Path(output_dir) if output_dir is not None else _DEFAULT_MODEL_DIR
     version = f"v{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     version_dir = base_dir / version
     version_dir.mkdir(parents=True, exist_ok=True)
@@ -71,9 +72,7 @@ def save_model(
         json.dump(metadata, f, indent=2)
     logger.info("Metadata saved to %s", metadata_path)
 
-    # Upload to GCS in prod mode
-    if _settings.env == "prod":
-        _upload_to_gcs(model_path, metadata_path, version)
+    _upload_to_gcs(model_path, metadata_path, version)
 
     return version_dir
 
@@ -81,11 +80,10 @@ def save_model(
 def load_latest_model(
     model_dir: str | Path | None = None,
 ) -> tuple[lgb.Booster, dict[str, Any]]:
-    """Load the most recently saved model from disk (or GCS in prod).
+    """Load the most recently saved model from disk, downloading from GCS if needed.
 
     Args:
-        model_dir: Directory containing version subdirectories.
-            Defaults to `settings.local_model_dir`.
+        model_dir: Directory containing version subdirectories. Defaults to /tmp/models.
 
     Returns:
         Tuple of (lgb.Booster, metadata dict).
@@ -93,10 +91,9 @@ def load_latest_model(
     Raises:
         FileNotFoundError: If no versioned model directory is found.
     """
-    base_dir = Path(model_dir) if model_dir is not None else Path(_settings.local_model_dir)
+    base_dir = Path(model_dir) if model_dir is not None else _DEFAULT_MODEL_DIR
 
-    # In prod, attempt GCS download if local dir is empty
-    if _settings.env == "prod" and not any(base_dir.glob("v*/")):
+    if not any(base_dir.glob("v*/")):
         logger.info("No local models found — downloading latest from GCS...")
         _download_latest_from_gcs(base_dir)
 
@@ -129,7 +126,7 @@ def load_latest_model(
 def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
     """Upload model files to GCS. Only called in prod mode."""
     try:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to upload models to GCS.") from e
 
@@ -146,7 +143,7 @@ def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
 def _download_latest_from_gcs(base_dir: Path) -> None:
     """Download the latest model version from GCS to local disk."""
     try:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to download models from GCS.") from e
 

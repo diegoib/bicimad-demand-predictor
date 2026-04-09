@@ -1,4 +1,4 @@
-.PHONY: setup ingest-local ingest-test features train serve test lint airflow-up airflow-down
+.PHONY: setup features train serve test lint airflow-up airflow-down
 
 PYTHON := python
 SRC_DIR := src
@@ -7,9 +7,6 @@ TESTS_DIR := tests
 setup:
 	pip install -e ".[dev,ingestion,features,training,serving,monitoring]"
 	pre-commit install
-
-ingest-local:
-	$(PYTHON) -m src.ingestion.main
 
 features:
 	$(PYTHON) -m src.features.build_dataset

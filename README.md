@@ -27,31 +27,21 @@ make setup
 
 **Paso 1 — Registro**: Crea una cuenta gratuita en el [Portal de la EMT MobilityLabs](https://openapi.emtmadrid.es/). Recibirás un email y contraseña de acceso.
 
-**Paso 2 — Fichero `.env`**: Crea un fichero `.env` en la raíz del proyecto (está en `.gitignore`, nunca se sube al repositorio):
+**Paso 2 — Secret Manager**: Las credenciales se almacenan en Google Secret Manager con los nombres de secreto `bicimad-emt-email` y `bicimad-emt-password`. El sistema los lee automáticamente via Application Default Credentials (ADC).
 
-```
-BICIMAD_EMT_EMAIL=tu_email@ejemplo.com
-BICIMAD_EMT_PASSWORD=tu_contraseña
-BICIMAD_ENV=dev
-```
+Para desarrollo local, configura ADC contra el proyecto `bicimad-dev`:
 
-Las credenciales se leen directamente de variables de entorno — nunca se almacenan en el código ni en la configuración de la aplicación.
-
-**Sobre el token**: La API devuelve un `accessToken` que expira cada 24 horas. El sistema lo cachea automáticamente en `data/.token_cache.json` y lo renueva cuando es necesario.
-
-**Modo mock** (sin credenciales reales): Para probar el pipeline de ingesta sin credenciales EMT:
-
-```
-BICIMAD_MOCK=true make ingest-local
+```bash
+gcloud auth application-default login
+export BICIMAD_BQ_PROJECT=bicimad-dev
 ```
 
-**En producción (GCP)**: Las credenciales se almacenan en Google Secret Manager con los nombres de secreto `bicimad-emt-email` y `bicimad-emt-password`. El sistema los lee automáticamente cuando `BICIMAD_ENV=prod`.
+**Sobre el token**: La API devuelve un `accessToken` que expira cada 24 horas. El sistema lo cachea automáticamente en `/tmp/.bicimad_token_cache.json` (configurable via `BICIMAD_TOKEN_CACHE_PATH`) y lo renueva cuando es necesario.
 
 ### Comandos principales
 
 ```bash
-make ingest-local   # Descarga datos reales de BiciMAD y Open-Meteo
-make features       # Construye el dataset de features
+make features       # Construye el dataset de features desde BigQuery
 make train          # Entrena el modelo
 make serve          # Levanta la API de predicción
 make test           # Ejecuta los tests

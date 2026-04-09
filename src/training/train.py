@@ -8,7 +8,7 @@ Both functions accept Polars DataFrames and use val_df for early stopping only.
 Final evaluation should be done on the held-out test split.
 
 Usage:
-    python -m src.training.train [--source local|bigquery] [--train-days 28]
+    python -m src.training.train [--train-days 28]
                                  [--optuna] [--n-trials 50] [--output-dir PATH]
 """
 
@@ -246,12 +246,11 @@ if __name__ == "__main__":
     setup_logging()
 
     parser = argparse.ArgumentParser(description="Train BiciMAD LightGBM model")
-    parser.add_argument("--source", default="local", choices=["local", "bigquery"])
     parser.add_argument("--start-date", default=None, help="YYYY-MM-DD")
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD")
     parser.add_argument("--train-days", type=int, default=28)
     parser.add_argument(
-        "--output-dir", default=None, help="Model output directory (default: from config)"
+        "--output-dir", default=None, help="Model output directory (default: /tmp/models)"
     )
     parser.add_argument("--optuna", action="store_true", help="Use Optuna hyperparameter search")
     parser.add_argument("--n-trials", type=int, default=50)
@@ -265,7 +264,7 @@ if __name__ == "__main__":
     start = date.fromisoformat(args.start_date) if args.start_date else None
     end = date.fromisoformat(args.end_date) if args.end_date else None
 
-    df = build_training_dataset(source=args.source, start_date=start, end_date=end)
+    df = build_training_dataset(start_date=start, end_date=end)
     train_df, val_df, test_df = temporal_split(df, train_days=args.train_days)
 
     if args.optuna:

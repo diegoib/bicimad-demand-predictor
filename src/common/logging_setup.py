@@ -1,7 +1,6 @@
 """Structured logging configuration.
 
-- dev:  human-readable text output
-- prod: JSON output (structured, suitable for Cloud Logging)
+Always uses JSON output (structured, suitable for Cloud Logging).
 """
 
 import json
@@ -12,7 +11,7 @@ from typing import Any
 
 
 class JsonFormatter(logging.Formatter):
-    """Formats log records as single-line JSON for production."""
+    """Formats log records as single-line JSON for Cloud Logging."""
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry: dict[str, Any] = {
@@ -26,24 +25,14 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False)
 
 
-def setup_logging(env: str = "dev", level: int = logging.INFO) -> None:
-    """Configure root logger.
+def setup_logging(level: int = logging.INFO) -> None:
+    """Configure root logger with JSON output.
 
     Args:
-        env: "dev" for text output, "prod" for JSON output.
         level: Logging level (default INFO).
     """
     handler = logging.StreamHandler(sys.stdout)
-
-    if env == "prod":
-        handler.setFormatter(JsonFormatter())
-    else:
-        handler.setFormatter(
-            logging.Formatter(
-                fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
+    handler.setFormatter(JsonFormatter())
 
     root = logging.getLogger()
     root.setLevel(level)
