@@ -11,7 +11,7 @@ Este repositorio contiene un sistema batch de ML para predecir la disponibilidad
 - Apache Airflow 2.x (orquestación, self-hosted con Docker Compose)
 - Google Cloud: Cloud Functions, Cloud Storage, BigQuery, Cloud Scheduler
 - Pydantic v2 (validación de schemas y configuración)
-- DuckDB para exploración local, BigQuery para producción
+- BigQuery para almacenamiento y consultas de datos
 - pytest para tests
 
 ## Estructura del repositorio
@@ -62,7 +62,7 @@ bicimad-demand-forecast/
 - Toda la configuración vive en `src/common/config.py` usando Pydantic Settings.
 - Variables de entorno con prefijo `BICIMAD_` (ejemplo: `BICIMAD_GCS_BUCKET`).
 - Sin secrets hardcodeados. Usar Secret Manager o variables de entorno.
-- Entornos: `dev` (local con DuckDB), `prod` (GCP con BigQuery).
+- Dev y prod usan ambos GCP — dev con proyecto separado (`bicimad-dev`) y Application Default Credentials (`gcloud auth application-default login`). Los tests usan mocks de GCS/BQ.
 
 ### Tests
 - Tests unitarios en `tests/` reflejando la estructura de `src/`.
@@ -102,10 +102,8 @@ bicimad-demand-forecast/
 
 ```
 make setup          # Instalar dependencias y pre-commit hooks
-make ingest-local   # Ejecutar ingesta una vez (modo local con DuckDB)
-make ingest-test    # Ejecutar ingesta con datos mock
-make features       # Construir dataset de features desde datos locales
-make train          # Entrenar modelo localmente
+make features       # Construir dataset de features desde BigQuery
+make train          # Entrenar modelo (requiere ADC configurado)
 make serve          # Levantar API FastAPI en modo desarrollo
 make test           # Ejecutar tests
 make lint           # Ruff + mypy

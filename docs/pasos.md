@@ -199,51 +199,39 @@ Usuario: `admin` | Contraseña: `admin`
 
 ## Parte 2: Ingesta de datos
 
-Con Airflow en marcha, hay que verificar que la ingesta funciona primero en local y luego activar el DAG para que se ejecute automáticamente cada 15 minutos.
+Con Airflow en marcha, hay que verificar que la ingesta funciona antes de activar el DAG para que se ejecute automáticamente cada 15 minutos.
 
 ---
 
-### Paso 10: Probar la ingesta en local
+### Paso 10: Probar la ingesta manualmente
 
-Antes de activar la ingesta en producción, verifica que el código funciona en tu máquina.
+Antes de activar el DAG, verifica que el código funciona lanzando una ejecución manual.
 
-**10.1 — Crear el fichero `.env` con tus credenciales de EMT:**
+**10.1 — Configura ADC contra el proyecto de desarrollo:**
 
-En la raíz del repositorio crea un fichero `.env` (está en `.gitignore`, no se subirá a Git):
 ```bash
-BICIMAD_ENV=dev
-BICIMAD_EMT_EMAIL=tu_email@ejemplo.com
-BICIMAD_EMT_PASSWORD=tu_contraseña
+gcloud auth application-default login
+export BICIMAD_BQ_PROJECT=bicimad-dev  # o el proyecto que uses
 ```
 
-Las credenciales son las del portal de desarrolladores de EMT Madrid ([mobilitylabs.emtmadrid.es](https://mobilitylabs.emtmadrid.es)). Si aún no tienes cuenta, regístrate ahí primero.
+Las credenciales de la API de EMT se leen desde Google Secret Manager (secretos `bicimad-emt-email` y `bicimad-emt-password`). Asegúrate de que existen en tu proyecto GCP.
 
 **10.2 — Instalar las dependencias del proyecto:**
 ```bash
 make setup
 ```
 
-**10.3 — Ejecutar una ingesta de prueba (con datos mock, sin llamar a la API real):**
+**10.3 — Ejecutar los tests para verificar que el código está en buen estado:**
 ```bash
-make ingest-test
-```
-Esto verifica que el código compila y que la escritura de ficheros funciona, sin gastar llamadas a la API.
-
-**10.4 — Ejecutar una ingesta real:**
-```bash
-make ingest-local
+make test
 ```
 
-Si todo va bien, verás en la terminal el número de estaciones descargadas y los datos meteorológicos. Se habrán creado ficheros JSON en `data/raw/` con esta estructura:
-```
-data/raw/station_status/dt=YYYY-MM-DD/hh=HH/mm=MM.json
+**10.4 — Lanzar una ejecución manual del DAG de ingesta** desde la UI de Airflow o directamente:
+```bash
+python -m src.ingestion.main
 ```
 
-**10.5 — Verificar el contenido:**
-```bash
-ls data/raw/station_status/
-# Navega hasta el fichero más reciente y ábrelo para confirmar que tiene datos válidos
-```
+Si todo va bien, verás en la terminal el número de estaciones descargadas y los datos meteorológicos. Los datos se habrán escrito en GCS y BigQuery.
 
 ---
 
@@ -304,7 +292,7 @@ Deberías ver filas con `ingestion_timestamp` correspondiente a las últimas eje
 make airflow-up
 
 # Ejecutar una ingesta manualmente
-make ingest-local
+python -m src.ingestion.main
 
 # Ejecutar los tests
 make test

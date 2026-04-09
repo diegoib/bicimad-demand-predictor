@@ -24,7 +24,6 @@ ingestion = [
 ]
 features = [
     "pandas>=2.1",
-    "duckdb>=0.9",
 ]
 training = [
     "lightgbm>=4.1",
@@ -66,13 +65,18 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501", "N806"]  # N806: uppercase X is standard ML convention for feature matrix
+ignore = ["E501", "N802", "N803", "N806"]  # N80x: uppercase X/function names are ML convention
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "src.serving.app"
+disallow_untyped_decorators = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "tests"]
 addopts = "-v --tb=short"

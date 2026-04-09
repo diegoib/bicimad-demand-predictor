@@ -3,8 +3,9 @@
 Handles authentication (GET /v2/mobilitylabs/user/login/ with credentials as headers),
 24-hour token caching, and station data fetching with exponential-backoff retries.
 
-Credentials are never stored in Settings — they are read from environment variables
-in dev (loaded from .env) or from Google Secret Manager in prod.
+Credentials are always read from Google Secret Manager. Use Application Default
+Credentials (gcloud auth application-default login) for local development with
+a dev GCP project.
 """
 
 import json
@@ -22,7 +23,12 @@ logger = get_logger(__name__)
 
 EMT_BASE_URL = "https://openapi.emtmadrid.es"
 TOKEN_TTL_SECONDS = 23 * 3600  # 23 h — token expires in 24 h, use 23 h to be safe
-_DEFAULT_CACHE_PATH = Path("data/.token_cache.json")
+
+# Configurable cache path — /tmp is guaranteed writable in any Linux environment
+# (Airflow VM, Cloud Run, local dev). Override with BICIMAD_TOKEN_CACHE_PATH.
+_DEFAULT_CACHE_PATH = Path(
+    os.environ.get("BICIMAD_TOKEN_CACHE_PATH", "/tmp/.bicimad_token_cache.json")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -31,14 +37,10 @@ _DEFAULT_CACHE_PATH = Path("data/.token_cache.json")
 
 
 def get_emt_credentials() -> tuple[str, str]:
-    """Return (email, password) for the EMT MobilityLabs API.
+    """Return (email, password) for the EMT MobilityLabs API from Secret Manager.
 
-    Dev:  reads BICIMAD_EMT_EMAIL / BICIMAD_EMT_PASSWORD from the environment.
-          The .env file is loaded automatically by pydantic-settings when
-          ``Settings`` is imported; if calling this before that happens, ensure
-          the .env is sourced or the variables are exported.
-    Prod: fetches secrets from Google Secret Manager using the project id set
-          in BICIMAD_BQ_PROJECT.
+    Uses Application Default Credentials — run ``gcloud auth application-default
+    login`` for local development against the dev GCP project.
 
     Returns:
         Tuple of (email, password).
@@ -46,45 +48,7 @@ def get_emt_credentials() -> tuple[str, str]:
     Raises:
         RuntimeError: If credentials cannot be found.
     """
-    env = os.environ.get("BICIMAD_ENV", "dev")
-
-    if env == "prod":
-        return _credentials_from_secret_manager()
-
-    # Dev — read from environment (populated from .env by pydantic-settings or shell)
-    email = os.environ.get("BICIMAD_EMT_EMAIL", "")
-    password = os.environ.get("BICIMAD_EMT_PASSWORD", "")
-
-    if not email or not password:
-        # Attempt an explicit .env load as a last resort, then retry
-        _load_dotenv_if_available()
-        email = os.environ.get("BICIMAD_EMT_EMAIL", "")
-        password = os.environ.get("BICIMAD_EMT_PASSWORD", "")
-
-    # Also accept unprefixed EMAIL / PASSWORD (common .env convention)
-    if not email:
-        email = os.environ.get("EMAIL", "")
-    if not password:
-        password = os.environ.get("PASSWORD", "")
-
-    if not email or not password:
-        raise RuntimeError(
-            "EMT credentials not found. "
-            "Set BICIMAD_EMT_EMAIL and BICIMAD_EMT_PASSWORD (or EMAIL and PASSWORD) "
-            "in your .env file."
-        )
-
-    return email, password
-
-
-def _load_dotenv_if_available() -> None:
-    """Load .env into os.environ if python-dotenv is installed."""
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(override=False)
-    except ImportError:
-        pass
+    return _credentials_from_secret_manager()
 
 
 def _credentials_from_secret_manager() -> tuple[str, str]:
@@ -95,7 +59,7 @@ def _credentials_from_secret_manager() -> tuple[str, str]:
     if not project_id:
         raise RuntimeError("BICIMAD_BQ_PROJECT must be set to use Secret Manager.")
 
-    client = secretmanager.SecretManagerServiceClient()  # type: ignore[attr-defined]
+    client = secretmanager.SecretManagerServiceClient()
 
     def _access(secret_id: str) -> str:
         name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
@@ -111,7 +75,15 @@ def _credentials_from_secret_manager() -> tuple[str, str]:
 
 
 class TokenCache:
-    """Persist and validate the BiciMAD access token on local disk.
+    """Persist and validate the BiciMAD access token on disk.
+
+    The Airflow worker runs on a persistent VM (e2-medium) — the cache file
+    survives between DAG task invocations, avoiding a redundant login on each
+    of the ~96 daily 15-minute ingestion cycles.
+
+    The cache path defaults to ``/tmp/.bicimad_token_cache.json`` (guaranteed
+    writable on any Linux host) and can be overridden via the
+    ``BICIMAD_TOKEN_CACHE_PATH`` environment variable.
 
     Args:
         cache_path: Path to the JSON cache file.
@@ -203,13 +175,11 @@ def login() -> str:
 
 
 def get_valid_token(cache: TokenCache | None = None) -> str:
-    """Return a valid access token, using the local cache when possible.
-
-    In Cloud Function (prod) deployments pass ``cache=None`` to always
-    re-authenticate (no persistent disk available).
+    """Return a valid access token, using the disk cache when available.
 
     Args:
-        cache: Optional TokenCache instance for local caching.
+        cache: Optional TokenCache instance. Pass None to always re-authenticate
+               (e.g. in stateless Cloud Function deployments).
 
     Returns:
         A valid access token string.
