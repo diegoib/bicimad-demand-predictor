@@ -111,6 +111,79 @@ resource "google_bigquery_table" "station_status_raw" {
 }
 
 # ---------------------------------------------------------------------------
+# BigQuery — batch predictions
+# ---------------------------------------------------------------------------
+
+resource "google_bigquery_table" "predictions" {
+  dataset_id          = google_bigquery_dataset.bicimad.dataset_id
+  table_id            = "predictions"
+  deletion_protection = false
+
+  time_partitioning {
+    type  = "DAY"
+    field = "prediction_made_at"
+  }
+
+  clustering = ["station_id"]
+
+  schema = jsonencode([
+    { name = "station_id",           type = "INTEGER",   mode = "REQUIRED", description = "Station internal ID (EMT)" },
+    { name = "prediction_made_at",   type = "TIMESTAMP", mode = "REQUIRED", description = "UTC snapshot timestamp when prediction was made (t)" },
+    { name = "target_time",          type = "TIMESTAMP", mode = "REQUIRED", description = "UTC time the prediction applies to (t+1h)" },
+    { name = "predicted_dock_bikes", type = "FLOAT64",   mode = "REQUIRED", description = "Predicted number of docked bikes at target_time" },
+    { name = "model_version",        type = "STRING",    mode = "REQUIRED", description = "Model version string (e.g. v20260115_100000)" }
+  ])
+}
+
+resource "google_bigquery_table" "cycle_metrics" {
+  dataset_id          = google_bigquery_dataset.bicimad.dataset_id
+  table_id            = "cycle_metrics"
+  deletion_protection = false
+
+  time_partitioning {
+    type  = "DAY"
+    field = "cycle_timestamp"
+  }
+
+  clustering = ["model_version"]
+
+  schema = jsonencode([
+    { name = "cycle_timestamp",    type = "TIMESTAMP", mode = "REQUIRED", description = "Snapshot timestamp that was reconciled (T-1h)" },
+    { name = "model_version",      type = "STRING",    mode = "REQUIRED", description = "Model version string" },
+    { name = "n_predictions",      type = "INTEGER",   mode = "REQUIRED", description = "Number of stations reconciled in this cycle" },
+    { name = "mae",                type = "FLOAT64",   mode = "REQUIRED", description = "Mean absolute error across all reconciled stations" },
+    { name = "rmse",               type = "FLOAT64",   mode = "REQUIRED", description = "Root mean squared error" },
+    { name = "p50_error",          type = "FLOAT64",   mode = "REQUIRED", description = "Median absolute error (50th percentile)" },
+    { name = "p90_error",          type = "FLOAT64",   mode = "REQUIRED", description = "90th percentile absolute error" },
+    { name = "worst_station_id",   type = "INTEGER",   mode = "REQUIRED", description = "Station ID with the highest absolute error" },
+    { name = "worst_station_error",type = "FLOAT64",   mode = "REQUIRED", description = "Absolute error of the worst station" },
+    { name = "reconciled_at",      type = "TIMESTAMP", mode = "REQUIRED", description = "UTC timestamp when reconciliation ran" }
+  ])
+}
+
+resource "google_bigquery_table" "station_daily_metrics" {
+  dataset_id          = google_bigquery_dataset.bicimad.dataset_id
+  table_id            = "station_daily_metrics"
+  deletion_protection = false
+
+  time_partitioning {
+    type  = "DAY"
+    field = "date"
+  }
+
+  clustering = ["station_id"]
+
+  schema = jsonencode([
+    { name = "date",          type = "DATE",    mode = "REQUIRED", description = "Calendar date (UTC)" },
+    { name = "station_id",    type = "INTEGER", mode = "REQUIRED", description = "Station internal ID (EMT)" },
+    { name = "model_version", type = "STRING",  mode = "REQUIRED", description = "Model version used for predictions on this date" },
+    { name = "n_cycles",      type = "INTEGER", mode = "REQUIRED", description = "Number of cycles reconciled for this station on this date" },
+    { name = "daily_mae",     type = "FLOAT64", mode = "REQUIRED", description = "Mean absolute error across all cycles for this station and date" },
+    { name = "daily_rmse",    type = "FLOAT64", mode = "REQUIRED", description = "Root mean squared error across all cycles" }
+  ])
+}
+
+# ---------------------------------------------------------------------------
 # Service Account — ingestion & Airflow
 # ---------------------------------------------------------------------------
 

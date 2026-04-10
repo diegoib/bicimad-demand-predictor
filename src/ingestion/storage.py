@@ -1,6 +1,8 @@
-"""Storage layer for raw ingestion data.
+"""Storage layer for raw ingestion data and predictions.
 
 Writes raw snapshots to Google Cloud Storage and BigQuery.
+Also provides streaming-insert helpers for batch predictions and
+aggregated cycle metrics (used by the post-ingestion predict/reconcile phases).
 
 Partition format: station_status/dt=YYYY-MM-DD/hh=HH/mm=MM.json
 """
@@ -10,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from src.common.logging_setup import get_logger
+from src.common.schemas import BatchPredictionRow, CycleMetrics
 
 logger = get_logger(__name__)
 
@@ -96,3 +99,46 @@ def load_to_bigquery(
 
     logger.info("Loaded %d rows into %s", len(rows), table_ref)
     return len(rows)
+
+
+def load_predictions_to_bigquery(
+    predictions: list[BatchPredictionRow],
+    project: str,
+    dataset: str,
+) -> int:
+    """Insert batch prediction rows into BigQuery table `predictions`.
+
+    Args:
+        predictions: List of BatchPredictionRow objects to insert.
+        project: GCP project ID.
+        dataset: BigQuery dataset name.
+
+    Returns:
+        Number of rows inserted.
+
+    Raises:
+        RuntimeError: If BigQuery reports insertion errors.
+    """
+    rows = [p.model_dump(mode="json") for p in predictions]
+    return load_to_bigquery(rows, project, dataset, "predictions")
+
+
+def load_cycle_metrics_to_bigquery(
+    metrics: CycleMetrics,
+    project: str,
+    dataset: str,
+) -> int:
+    """Insert one CycleMetrics row into BigQuery table `cycle_metrics`.
+
+    Args:
+        metrics: Aggregated metrics for one reconciliation cycle.
+        project: GCP project ID.
+        dataset: BigQuery dataset name.
+
+    Returns:
+        Number of rows inserted (always 1).
+
+    Raises:
+        RuntimeError: If BigQuery reports insertion errors.
+    """
+    return load_to_bigquery([metrics.model_dump(mode="json")], project, dataset, "cycle_metrics")

@@ -1,36 +1,76 @@
 """Ingestion orchestrator.
 
-Ties together authentication, data fetching, validation, and storage into a
-single ``ingest()`` function that can be called:
+Ties together authentication, data fetching, validation, storage, batch
+prediction and prediction reconciliation into a single ``ingest()`` function
+that can be called:
 
-- By Airflow (imported and called from a DAG task).
+- By Airflow (via BashOperator spawning ``python -m src.ingestion.main``).
 - As a Cloud Function entry point via ``handler(request)``.
 - Directly from the command line.
+
+Pipeline phases (in order):
+  1. Authenticate with EMT API (token cached on disk)
+  2. Fetch station snapshots + weather
+  3. Write raw payload to GCS
+  4. Stream station rows to BigQuery ``station_status_raw``
+  5. Run batch inference → write predictions to BigQuery ``predictions``
+     (try/except: failure here does NOT abort the ingestion cycle)
+  6. Reconcile previous predictions against current actuals → write
+     aggregated CycleMetrics to BigQuery ``cycle_metrics``
+     (try/except: failure here does NOT abort the ingestion cycle)
 """
 
 import json
 from datetime import UTC, datetime
 from typing import Any
 
+import lightgbm as lgb
+
 from src.common.config import settings
 from src.common.logging_setup import get_logger, setup_logging
 from src.ingestion.bicimad_client import TokenCache, fetch_stations, get_valid_token
-from src.ingestion.storage import load_to_bigquery, write_raw_to_gcs
+from src.ingestion.storage import (
+    load_cycle_metrics_to_bigquery,
+    load_predictions_to_bigquery,
+    load_to_bigquery,
+    write_raw_to_gcs,
+)
 from src.ingestion.weather_client import fetch_current_weather
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level model cache — survives between Airflow task retries within the
+# same subprocess (BashOperator), but NOT between separate Python invocations.
+# Calling _get_model() downloads once from GCS on first use, then reuses.
+# ---------------------------------------------------------------------------
+
+_model_cache: tuple[lgb.Booster, dict[str, Any]] | None = None
+
+
+def _get_model() -> tuple[lgb.Booster, dict[str, Any]]:
+    """Return the cached model, downloading from GCS on first call."""
+    global _model_cache
+    if _model_cache is None:
+        from src.training.registry import load_latest_model
+
+        _model_cache = load_latest_model()
+    return _model_cache
+
 
 def ingest() -> dict[str, Any]:
-    """Run one ingestion cycle: authenticate → fetch → validate → write.
+    """Run one full ingestion cycle: fetch → store → predict → reconcile.
 
-    Writes raw snapshots to GCS and flattened station rows to BigQuery.
+    Phases 5 (predict) and 6 (reconcile) are non-fatal: failures are logged
+    as warnings but do not raise, so the Airflow task succeeds even when no
+    trained model exists yet.
 
     Returns:
-        Summary dict with ``status``, ``stations`` count and ``timestamp``.
+        Summary dict with status, stations count, timestamp, and prediction
+        and reconciliation stats.
 
     Raises:
-        Exception: Propagates any unhandled error from the sub-components.
+        Exception: Propagates unhandled errors from phases 1–4.
     """
     setup_logging()
     logger.info("Starting ingestion cycle")
@@ -80,11 +120,77 @@ def ingest() -> dict[str, Any]:
 
     load_to_bigquery(rows, settings.bq_project, settings.bq_dataset, "station_status_raw")
 
+    # ------------------------------------------------------------------
+    # 5. Batch inference (non-fatal)
+    # ------------------------------------------------------------------
+    predictions_written = 0
+    try:
+        from src.features.build_dataset import _load_bigquery_snapshots
+        from src.serving.predict import predict_all_stations
+
+        model, metadata = _get_model()
+        model_version = str(metadata.get("version", "unknown"))
+
+        # Load 8 days of historical snapshots to populate lag and rolling
+        # features.
+        from datetime import timedelta
+
+        hist_start = (timestamp - timedelta(days=8)).date()
+        hist_end = timestamp.date()
+        try:
+            historical_df = _load_bigquery_snapshots(hist_start, hist_end)
+        except Exception as hist_exc:
+            logger.warning("Could not load historical snapshots for features: %s", hist_exc)
+            historical_df = None
+
+        predictions = predict_all_stations(
+            model,
+            model_version,
+            stations_response,
+            weather,
+            timestamp,
+            historical_df=historical_df,
+        )
+        if predictions:
+            predictions_written = load_predictions_to_bigquery(
+                predictions, settings.bq_project, settings.bq_dataset
+            )
+            logger.info("Wrote %d predictions to BigQuery", predictions_written)
+        else:
+            logger.info("No predictions produced (no active stations or model not ready)")
+    except Exception as exc:
+        logger.warning("Prediction phase failed (non-fatal): %s", exc)
+
+    # ------------------------------------------------------------------
+    # 6. Reconciliation (non-fatal)
+    # ------------------------------------------------------------------
+    cycle_mae: float | None = None
+    try:
+        from src.monitoring.reconcile import reconcile_predictions
+
+        metrics = reconcile_predictions(
+            stations_response, timestamp, settings.bq_project, settings.bq_dataset
+        )
+        if metrics:
+            load_cycle_metrics_to_bigquery(metrics, settings.bq_project, settings.bq_dataset)
+            cycle_mae = metrics.mae
+            logger.info(
+                "Reconciliation complete: n=%d MAE=%.4f RMSE=%.4f p90=%.4f",
+                metrics.n_predictions,
+                metrics.mae,
+                metrics.rmse,
+                metrics.p90_error,
+            )
+    except Exception as exc:
+        logger.warning("Reconciliation phase failed (non-fatal): %s", exc)
+
     result: dict[str, Any] = {
         "status": "ok",
         "stations": len(stations_response.data),
         "timestamp": timestamp.isoformat(),
         "weather_available": weather is not None,
+        "predictions_written": predictions_written,
+        "cycle_mae": cycle_mae,
     }
     logger.info("Ingestion cycle complete: %s", result)
     return result

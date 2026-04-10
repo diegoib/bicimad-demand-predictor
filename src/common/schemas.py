@@ -154,3 +154,23 @@ class BatchPredictionRow(BaseModel):
     target_time: datetime = Field(description="Time for which the prediction applies (t+1h)")
     predicted_dock_bikes: float
     model_version: str
+
+
+class CycleMetrics(BaseModel):
+    """Aggregated prediction error metrics for one ingestion cycle.
+
+    Written to BigQuery ``cycle_metrics`` table once per reconciliation cycle
+    (every 15 min, with a 1-hour lag for ground truth to arrive).
+    One row per cycle — no per-station granularity stored here.
+    """
+
+    cycle_timestamp: datetime = Field(description="Snapshot timestamp that was reconciled (T-1h)")
+    model_version: str
+    n_predictions: int = Field(description="Number of stations reconciled in this cycle")
+    mae: float = Field(description="Mean absolute error across all reconciled stations")
+    rmse: float = Field(description="Root mean squared error")
+    p50_error: float = Field(description="Median absolute error (50th percentile)")
+    p90_error: float = Field(description="90th percentile absolute error")
+    worst_station_id: int = Field(description="Station ID with the highest absolute error")
+    worst_station_error: float = Field(description="Absolute error of the worst station")
+    reconciled_at: datetime = Field(description="UTC timestamp when reconciliation ran")

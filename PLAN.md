@@ -177,13 +177,14 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Tarea única `PythonOperator` que llama a `src.ingestion.main.ingest()`
   - Retries: 3 con exponential backoff (2 min → 10 min max)
   - XCom con `stations_count` y `ingest_timestamp` para observabilidad
-- [ ] **5.3** Crear `dags/training_dag.py`:
+  - Nota: `ingest()` incluye internamente las fases predict y reconcile — el DAG no necesita cambios para soportar la inferencia
+- [x] **5.3** Crear `dags/training_dag.py`:
   - Schedule: semanal (domingo 03:00)
   - Task 1: `CloudRunExecuteJobOperator` → lanza Cloud Run Job de entrenamiento
   - El job ejecuta: build_dataset → split → train → evaluate → compare_with_previous → register_model → drift_report
   - Condicional: solo registrar modelo si mejora al anterior
   - El entrenamiento corre en Cloud Run Jobs (no en la VM) para no competir con Airflow por RAM
-- [ ] **5.4** Crear `infra/training/Dockerfile`:
+- [x] **5.4** Crear `infra/training/Dockerfile`:
   - Imagen ligera (python:3.11-slim) solo con dependencias de training (polars, lightgbm, optuna, google-cloud-bigquery, google-cloud-storage)
   - Entrypoint: `python -m src.training.train`
 - [ ] **5.5** Crear Cloud Run Job en GCP (`gcloud run jobs create` o Terraform):
@@ -192,10 +193,10 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - Variables de entorno: mismas que la VM (bucket, BQ dataset, project)
 - [ ] **5.6** Probar localmente: `make airflow-up`, verificar que los DAGs aparecen en el UI y se ejecutan correctamente
 - [ ] **5.7** Documentar el setup de Airflow en la VM e2-medium de GCP
-- [ ] **5.8** Añadir schemas de predicción a `src/common/schemas.py`:
+- [x] **5.8** Añadir schemas de predicción a `src/common/schemas.py`:
   - `BatchPredictionRow`: `station_id`, `prediction_made_at` (T), `target_time` (T+60), `predicted_dock_bikes`, `model_version`
-  - `PredictionError`: `station_id`, `prediction_made_at` (T-60), `target_time` (T), `predicted_dock_bikes`, `actual_dock_bikes`, `absolute_error`, `squared_error`, `model_version`, `reconciled_at`
-- [ ] **5.9** Crear `src/serving/predict.py`:
+  - `CycleMetrics`: `cycle_timestamp`, `model_version`, `n_predictions`, `mae`, `rmse`, `p50_error`, `p90_error`, `worst_station_id`, `worst_station_error`
+- [x] **5.9** Crear `src/serving/predict.py`:
   - `predict_all_stations(model, model_version, stations_response, weather, snapshot_timestamp, feature_cols=None) -> list[BatchPredictionRow]`
     - Solo estaciones activas (`activate==1` y `no_available==0`)
     - Llama a `build_all_features()` de `src.features.build_features` y a `_prepare_features()` de `src.training.train` (mismo código que training — cero training-serving skew)
@@ -203,54 +204,76 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
   - `_raw_snapshot_to_polars(stations_response, weather, snapshot_timestamp) -> pl.DataFrame` (privada)
     - Produce exactamente las mismas columnas que `_load_json_file` en `build_dataset.py`
     - Si `weather` es `None`, rellena columnas meteorológicas con centinelas (0.0/0/False)
-- [ ] **5.10** Crear `src/monitoring/reconcile.py`:
-  - `reconcile_predictions_local(current_snapshot, snapshot_timestamp, predictions_path) -> list[PredictionError] | None`
-    - Dev: lee JSONL de `{predictions_path}/predictions/dt=.../hh=.../mm=MM.jsonl` para `snapshot_timestamp - 60min`
-    - Retorna `None` si no existe el fichero (primera hora de operación)
-  - `reconcile_predictions(current_snapshot, snapshot_timestamp, bq_project, bq_dataset) -> list[PredictionError] | None`
-    - Prod: consulta BQ tabla `predictions` donde `target_time == snapshot_timestamp`; retorna `None` si no hay filas
-  - `compute_cycle_mae(errors: list[PredictionError]) -> float` — media de `absolute_error`; `ValueError` si lista vacía
-- [ ] **5.11** Extender `src/ingestion/storage.py` con 4 funciones nuevas (sin modificar las existentes):
-  - `write_predictions_to_local(predictions, base_path, snapshot_timestamp) -> Path` → `predictions/dt=.../hh=.../mm=MM.jsonl`
-  - `write_prediction_errors_to_local(errors, base_path, snapshot_timestamp) -> Path` → `prediction_errors/dt=.../hh=.../mm=MM.jsonl`
+- [x] **5.10** Crear `src/monitoring/reconcile.py`:
+  - `reconcile_predictions(current_snapshot, snapshot_timestamp, bq_project, bq_dataset) -> CycleMetrics | None`
+    - Consulta BQ tabla `predictions` donde `target_time == snapshot_timestamp`; retorna `None` si no hay filas
+    - Calcula MAE, RMSE, p50/p90 de error, worst station directamente en memoria
+    - Devuelve `CycleMetrics` listo para insertar (no almacena errores individuales por estación)
+  - `compute_cycle_mae(metrics: CycleMetrics) -> float` — acceso directo al campo `mae`
+- [x] **5.11** Extender `src/ingestion/storage.py` con 2 funciones nuevas (sin modificar las existentes):
   - `load_predictions_to_bigquery(predictions, project, dataset) -> int` — streaming insert tabla `predictions`
-  - `load_prediction_errors_to_bigquery(errors, project, dataset) -> int` — streaming insert tabla `prediction_errors`
-- [ ] **5.12** Extender `src/ingestion/main.py`: añadir fases predict + reconcile al final de `ingest()`:
+  - `load_cycle_metrics_to_bigquery(metrics, project, dataset) -> int` — streaming insert tabla `cycle_metrics`
+- [x] **5.12** Extender `src/ingestion/main.py`: añadir fases predict + reconcile al final de `ingest()`:
   - Cache lazy del modelo a nivel de módulo: `_model_cache: tuple[lgb.Booster, dict] | None = None` + `_get_model()`
-  - **Fase predict** (try/except no fatal): `_get_model()` → `predict_all_stations()` → `write_predictions_to_local` o `load_predictions_to_bigquery`
-  - **Fase reconcile** (try/except no fatal): `reconcile_predictions_local/_bq()` → si hay errores: `compute_cycle_mae()` + log + escritura
-  - Extender dict de retorno: `predictions_written`, `errors_reconciled`, `cycle_mae`
+  - **Fase predict** (try/except no fatal): `_get_model()` → `predict_all_stations()` → `load_predictions_to_bigquery`
+  - **Fase reconcile** (try/except no fatal): `reconcile_predictions()` → si hay métricas: log + `load_cycle_metrics_to_bigquery`
+  - Extender dict de retorno: `predictions_written`, `cycle_mae`
   - El DAG de Airflow **no cambia** — toda la lógica vive en `ingest()`
-- [ ] **5.13** Crear tests:
+- [x] **5.13** Crear tests (pendiente actualizar para el nuevo diseño de métricas agregadas):
   - `tests/test_serving/test_predict.py`: columnas de `_raw_snapshot_to_polars` idénticas a `_load_json_file`, excluye inactivas, centinelas sin weather; `predict_all_stations`: N activas → N rows, `target_time = prediction_made_at + 1h`, valores finitos, mismos dtypes que training (anti-skew)
-  - `tests/test_monitoring/test_reconcile.py`: `compute_cycle_mae` (exacto, promedio, ValueError vacío); `reconcile_predictions_local` (None sin fichero, errores correctos, absolute/squared_error bien calculados, estaciones sin match se omiten)
-  - Extender `tests/test_ingestion/test_storage.py`: `TestWritePredictionsToLocal` y `TestWritePredictionErrorsToLocal` (ruta correcta, JSONL válido, crea directorios)
-- [ ] **5.14** Tablas BQ + vista SQL (en `infra/terraform/` o `bq mk`):
-  - Tabla `predictions`: partición en `prediction_made_at`, cluster por `station_id` — campos: `station_id INT`, `prediction_made_at TIMESTAMP`, `target_time TIMESTAMP`, `predicted_dock_bikes FLOAT`, `model_version STRING`
-  - Tabla `prediction_errors`: partición en `target_time`, cluster por `station_id` — campos anteriores + `actual_dock_bikes INT`, `absolute_error FLOAT`, `squared_error FLOAT`, `reconciled_at TIMESTAMP`
-  - Vista `infra/bq_views/v_online_mae.sql`: MAE/RMSE diario por `model_version` sobre `prediction_errors`
+  - `tests/test_monitoring/test_reconcile.py`: `reconcile_predictions` (None sin filas BQ, CycleMetrics correcto con MAE/RMSE/p50/p90, worst_station_id correcto, estaciones sin match se omiten)
+  - Extender `tests/test_ingestion/test_storage.py`: `TestLoadPredictionsToBigquery` y `TestLoadCycleMetricsToBigquery`
+- [x] **5.14** Tablas BQ (en `infra/terraform/`):
+  - Tabla `predictions`: partición en `prediction_made_at`, cluster por `station_id`
+  - Tabla `cycle_metrics`: partición en `cycle_timestamp`, cluster por `model_version` — una fila por ciclo de ingesta con MAE, RMSE, p50/p90, worst station
+  - Tabla `station_daily_metrics`: partición en `date`, cluster por `station_id` — una fila por (estación, día) con MAE diario; escrita por el job diario de monitorización (Fase 6)
 
-**Done cuando:** Airflow ejecuta ambos DAGs correctamente. El DAG de ingesta escribe datos cada 15 min; el DAG de training dispara un Cloud Run Job que produce un modelo versionado en GCS. A partir del segundo ciclo de ingesta, `ingest()` escribe predicciones y (60 min después) errores de reconciliación, logueando el MAE de ciclo.
+**Done cuando:** Airflow ejecuta ambos DAGs correctamente. El DAG de ingesta escribe datos cada 15 min; el DAG de training dispara un Cloud Run Job que produce un modelo versionado en GCS. A partir del segundo ciclo de ingesta, `ingest()` escribe predicciones y (60 min después) métricas agregadas del ciclo en `cycle_metrics`.
 
 ---
 
 ## Fase 6: Monitorización
 
-- [ ] **6.1** Crear `src/monitoring/drift_report.py`:
-  - Función que genera reporte Evidently comparando features recientes vs periodo de entrenamiento
-  - Data drift + prediction drift
-  - Guardar reporte HTML en GCS
-- [ ] **6.2** Crear `src/monitoring/alerts.py`:
-  - Función que compara MAE online (últimas 24h desde vista `v_online_mae`) vs MAE del último entrenamiento (campo `mae` en `metadata.json` del modelo activo)
-  - Si MAE sube >20%, disparar alerta (email o log)
-  - Si drift significativo en features clave, disparar reentrenamiento adelantado
-- [ ] **6.3** Integrar en el DAG de training (task `generate_drift_report` ya planificado en 5.3)
-- [ ] **6.4** Crear dashboard simple (Streamlit o HTML estático):
-  - Mapa de estaciones con predicciones coloreadas
-  - Gráfico de MAE histórico
-  - Última ejecución de ingesta y training
+Dos frecuencias de monitorización:
+- **Cada 15 min** — reconciliación dentro de `ingest()` → `cycle_metrics` (MAE por ciclo, ya en Fase 5)
+- **Diario** — job dedicado que agrega errores por estación + genera reporte de data drift Evidently
+- **Semanal** — reentrenamiento compara MAE online vs MAE de training y decide si registrar nuevo modelo
 
-**Done cuando:** cada entrenamiento semanal genera un reporte de drift y se comparan métricas automáticamente. Las alertas se disparan correctamente cuando se simula un aumento de error. El MAE online (vista `v_online_mae`) refleja el error real de predicción acumulado por el pipeline de ingesta.
+### Job diario de monitorización (`dags/daily_monitoring_dag.py`)
+
+- [ ] **6.1** Crear `src/monitoring/daily_metrics.py`:
+  - `compute_station_daily_metrics(date, bq_project, bq_dataset) -> list[StationDailyMetrics]`
+    - Lee `predictions` + `station_status_raw` del día anterior para obtener actuals
+    - Calcula MAE/RMSE diario por estación agrupando los N ciclos del día
+    - Retorna lista de `StationDailyMetrics` lista para insertar en BQ
+  - Schema `StationDailyMetrics`: `date`, `station_id`, `model_version`, `n_cycles`, `daily_mae`, `daily_rmse`
+- [ ] **6.2** Crear `src/monitoring/drift_report.py`:
+  - `generate_daily_drift_report(date, bq_project, bq_dataset, gcs_bucket) -> dict`
+    - Carga features del día desde `station_status_raw`
+    - Carga features del periodo de entrenamiento del modelo activo (ventana de referencia de 28 días)
+    - Calcula data drift con Evidently (`DataDriftPreset`) — solo distribución de features, sin ground truth
+    - Guarda reporte HTML en GCS: `gs://bucket/monitoring/drift/YYYY-MM-DD.html`
+    - Retorna dict con `n_drifted_features`, `share_drifted`, `drifted_feature_names`
+  - Nota: el reporte semanal completo (con más contexto) se genera en el DAG de training
+- [ ] **6.3** Crear `src/monitoring/alerts.py`:
+  - `check_performance_alert(bq_project, bq_dataset) -> bool`
+    - Lee últimas 24h de `cycle_metrics`; compara MAE medio vs `mae` en `metadata.json` del modelo activo
+    - Si MAE online > MAE entrenamiento × 1.20: log warning + retorna True
+  - `check_drift_alert(drift_summary: dict) -> bool`
+    - Si `share_drifted` > 0.30 (más del 30% de features con drift): log warning + retorna True
+- [ ] **6.4** Crear `dags/daily_monitoring_dag.py`:
+  - Schedule: `0 6 * * *` (06:00 UTC, datos del día anterior completos)
+  - Task 1 (`compute_station_metrics`): llama a `compute_station_daily_metrics` → escribe a `station_daily_metrics`
+  - Task 2 (`generate_drift_report`): llama a `generate_daily_drift_report` → HTML a GCS
+  - Task 3 (`run_alerts`): llama a `check_performance_alert` + `check_drift_alert`
+  - Las 3 tasks son independientes (pueden correr en paralelo)
+- [ ] **6.5** Añadir tabla `station_daily_metrics` a Terraform (ya definida en 5.14, aquí se implementa el writer)
+- [ ] **6.6** Crear dashboard simple (Streamlit o HTML estático):
+  - Gráfico de MAE de ciclo (`cycle_metrics`) — últimos 7 días, línea temporal
+  - Tabla de peores estaciones (`station_daily_metrics`) — top 10 por MAE diario
+  - Última ejecución de ingesta y estado del drift report
+
+**Done cuando:** el DAG diario corre sin errores, `station_daily_metrics` se puebla con datos reales, el reporte HTML de drift se genera en GCS, y las alertas se disparan correctamente al simular degradación de MAE.
 
 ---
 

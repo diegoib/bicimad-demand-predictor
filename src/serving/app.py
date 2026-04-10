@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="BiciMAD Demand Forecast API",
     description="Read API for pre-computed dock_bikes predictions (t+1h) per station.",
-    version="0.2.0",
+    version="0.1.0",
 )
 
 # ---------------------------------------------------------------------------
