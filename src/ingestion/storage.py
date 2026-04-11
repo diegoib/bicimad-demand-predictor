@@ -12,7 +12,12 @@ from datetime import datetime
 from typing import Any
 
 from src.common.logging_setup import get_logger
-from src.common.schemas import BatchPredictionRow, CycleMetrics
+from src.common.schemas import (
+    BatchPredictionRow,
+    CycleMetrics,
+    OverallDailyMetrics,
+    StationDailyMetrics,
+)
 
 logger = get_logger(__name__)
 
@@ -142,3 +147,46 @@ def load_cycle_metrics_to_bigquery(
         RuntimeError: If BigQuery reports insertion errors.
     """
     return load_to_bigquery([metrics.model_dump(mode="json")], project, dataset, "cycle_metrics")
+
+
+def load_station_daily_metrics_to_bigquery(
+    metrics: list[StationDailyMetrics],
+    project: str,
+    dataset: str,
+) -> int:
+    """Insert per-station daily metrics into BigQuery table ``station_daily_metrics``.
+
+    Args:
+        metrics: List of StationDailyMetrics objects (one per station).
+        project: GCP project ID.
+        dataset: BigQuery dataset name.
+
+    Returns:
+        Number of rows inserted.
+
+    Raises:
+        RuntimeError: If BigQuery reports insertion errors.
+    """
+    rows = [m.model_dump(mode="json") for m in metrics]
+    return load_to_bigquery(rows, project, dataset, "station_daily_metrics")
+
+
+def load_overall_daily_metrics_to_bigquery(
+    metrics: OverallDailyMetrics,
+    project: str,
+    dataset: str,
+) -> int:
+    """Insert one OverallDailyMetrics row into BigQuery table ``daily_totals``.
+
+    Args:
+        metrics: Aggregate daily metrics across all stations.
+        project: GCP project ID.
+        dataset: BigQuery dataset name.
+
+    Returns:
+        Number of rows inserted (always 1).
+
+    Raises:
+        RuntimeError: If BigQuery reports insertion errors.
+    """
+    return load_to_bigquery([metrics.model_dump(mode="json")], project, dataset, "daily_totals")

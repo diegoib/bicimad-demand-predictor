@@ -4,6 +4,7 @@ Used by: ingestion, features, training, serving.
 When adding or modifying a feature, always update this file first.
 """
 
+from datetime import date as _date
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -174,3 +175,40 @@ class CycleMetrics(BaseModel):
     worst_station_id: int = Field(description="Station ID with the highest absolute error")
     worst_station_error: float = Field(description="Absolute error of the worst station")
     reconciled_at: datetime = Field(description="UTC timestamp when reconciliation ran")
+
+
+# ---------------------------------------------------------------------------
+# Daily monitoring schemas
+# ---------------------------------------------------------------------------
+
+
+class StationDailyMetrics(BaseModel):
+    """Per-station daily aggregated prediction error metrics.
+
+    Written to BigQuery ``station_daily_metrics`` once per day per station
+    by the daily monitoring job.
+    """
+
+    date: _date = Field(description="Calendar date (UTC) the metrics apply to")
+    station_id: int
+    model_version: str
+    n_cycles: int = Field(description="Number of reconciled cycles for this station on this date")
+    daily_mae: float = Field(description="Mean absolute error across all cycles for this station")
+    daily_rmse: float = Field(description="Root mean squared error across all cycles")
+
+
+class OverallDailyMetrics(BaseModel):
+    """Total daily aggregated prediction error metrics across all stations.
+
+    Written to BigQuery ``daily_totals`` once per day by the daily monitoring job.
+    Complements ``station_daily_metrics`` with a single aggregate row for the day.
+    """
+
+    date: _date = Field(description="Calendar date (UTC)")
+    model_version: str
+    n_stations: int = Field(description="Number of distinct stations with predictions on this date")
+    n_cycles: int = Field(description="Total (station, cycle) pairs reconciled on this date")
+    daily_mae: float = Field(
+        description="Overall mean absolute error across all stations and cycles"
+    )
+    daily_rmse: float = Field(description="Overall root mean squared error")

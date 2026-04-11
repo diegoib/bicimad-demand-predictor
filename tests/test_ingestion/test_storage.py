@@ -1,15 +1,22 @@
 """Tests for src/ingestion/storage.py."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.common.schemas import BatchPredictionRow, CycleMetrics
+from src.common.schemas import (
+    BatchPredictionRow,
+    CycleMetrics,
+    OverallDailyMetrics,
+    StationDailyMetrics,
+)
 from src.ingestion.storage import (
     _partition_key,
     load_cycle_metrics_to_bigquery,
+    load_overall_daily_metrics_to_bigquery,
     load_predictions_to_bigquery,
+    load_station_daily_metrics_to_bigquery,
 )
 
 # ---------------------------------------------------------------------------
@@ -163,3 +170,116 @@ class TestLoadCycleMetricsToBigquery:
             pytest.raises(RuntimeError, match="streaming insert errors"),
         ):
             load_cycle_metrics_to_bigquery(_METRICS, "proj", "dataset")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for daily metrics tests
+# ---------------------------------------------------------------------------
+
+_DATE = date(2026, 1, 14)
+
+_STATION_METRICS = [
+    StationDailyMetrics(
+        date=_DATE,
+        station_id=1,
+        model_version="v20260115_100000",
+        n_cycles=4,
+        daily_mae=1.5,
+        daily_rmse=2.0,
+    ),
+    StationDailyMetrics(
+        date=_DATE,
+        station_id=2,
+        model_version="v20260115_100000",
+        n_cycles=4,
+        daily_mae=2.5,
+        daily_rmse=3.0,
+    ),
+]
+
+_OVERALL_METRICS = OverallDailyMetrics(
+    date=_DATE,
+    model_version="v20260115_100000",
+    n_stations=2,
+    n_cycles=8,
+    daily_mae=2.0,
+    daily_rmse=2.5,
+)
+
+
+class TestLoadStationDailyMetricsToBigquery:
+    def test_returns_row_count(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            count = load_station_daily_metrics_to_bigquery(_STATION_METRICS, "proj", "dataset")
+        assert count == 2
+
+    def test_inserts_into_station_daily_metrics_table(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            load_station_daily_metrics_to_bigquery(_STATION_METRICS, "proj", "dataset")
+        call_args = mock_bq.Client.return_value.insert_rows_json.call_args
+        table_ref = call_args[0][0]
+        assert table_ref.endswith("station_daily_metrics")
+
+    def test_schema_keys_match_station_daily_metrics(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            load_station_daily_metrics_to_bigquery(_STATION_METRICS, "proj", "dataset")
+        inserted_rows = mock_bq.Client.return_value.insert_rows_json.call_args[0][1]
+        expected_keys = {
+            "date",
+            "station_id",
+            "model_version",
+            "n_cycles",
+            "daily_mae",
+            "daily_rmse",
+        }
+        assert set(inserted_rows[0].keys()) == expected_keys
+
+    def test_raises_on_bq_errors(self) -> None:
+        mock_bq = _mock_bq_client(insert_errors=[{"error": "bad row"}])
+        with (
+            patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
+            pytest.raises(RuntimeError, match="streaming insert errors"),
+        ):
+            load_station_daily_metrics_to_bigquery(_STATION_METRICS, "proj", "dataset")
+
+
+class TestLoadOverallDailyMetricsToBigquery:
+    def test_returns_1(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            count = load_overall_daily_metrics_to_bigquery(_OVERALL_METRICS, "proj", "dataset")
+        assert count == 1
+
+    def test_inserts_into_daily_totals_table(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            load_overall_daily_metrics_to_bigquery(_OVERALL_METRICS, "proj", "dataset")
+        call_args = mock_bq.Client.return_value.insert_rows_json.call_args
+        table_ref = call_args[0][0]
+        assert table_ref.endswith("daily_totals")
+
+    def test_schema_keys_match_overall_daily_metrics(self) -> None:
+        mock_bq = _mock_bq_client()
+        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}):
+            load_overall_daily_metrics_to_bigquery(_OVERALL_METRICS, "proj", "dataset")
+        inserted_rows = mock_bq.Client.return_value.insert_rows_json.call_args[0][1]
+        expected_keys = {
+            "date",
+            "model_version",
+            "n_stations",
+            "n_cycles",
+            "daily_mae",
+            "daily_rmse",
+        }
+        assert set(inserted_rows[0].keys()) == expected_keys
+
+    def test_raises_on_bq_errors(self) -> None:
+        mock_bq = _mock_bq_client(insert_errors=[{"error": "bad row"}])
+        with (
+            patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
+            pytest.raises(RuntimeError, match="streaming insert errors"),
+        ):
+            load_overall_daily_metrics_to_bigquery(_OVERALL_METRICS, "proj", "dataset")

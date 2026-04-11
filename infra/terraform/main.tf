@@ -161,6 +161,28 @@ resource "google_bigquery_table" "cycle_metrics" {
   ])
 }
 
+resource "google_bigquery_table" "daily_totals" {
+  dataset_id          = google_bigquery_dataset.bicimad.dataset_id
+  table_id            = "daily_totals"
+  deletion_protection = false
+
+  time_partitioning {
+    type  = "DAY"
+    field = "date"
+  }
+
+  clustering = ["model_version"]
+
+  schema = jsonencode([
+    { name = "date",          type = "DATE",    mode = "REQUIRED", description = "Calendar date (UTC)" },
+    { name = "model_version", type = "STRING",  mode = "REQUIRED", description = "Model version used for predictions on this date" },
+    { name = "n_stations",    type = "INTEGER", mode = "REQUIRED", description = "Number of distinct stations with predictions on this date" },
+    { name = "n_cycles",      type = "INTEGER", mode = "REQUIRED", description = "Total (station, cycle) pairs reconciled on this date" },
+    { name = "daily_mae",     type = "FLOAT64", mode = "REQUIRED", description = "Overall mean absolute error across all stations and cycles" },
+    { name = "daily_rmse",    type = "FLOAT64", mode = "REQUIRED", description = "Overall root mean squared error" }
+  ])
+}
+
 resource "google_bigquery_table" "station_daily_metrics" {
   dataset_id          = google_bigquery_dataset.bicimad.dataset_id
   table_id            = "station_daily_metrics"

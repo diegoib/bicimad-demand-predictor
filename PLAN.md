@@ -236,44 +236,58 @@ Cada fase tiene un criterio de "done" — no avanzar a la siguiente fase sin cum
 
 Dos frecuencias de monitorización:
 - **Cada 15 min** — reconciliación dentro de `ingest()` → `cycle_metrics` (MAE por ciclo, ya en Fase 5)
-- **Diario** — job dedicado que agrega errores por estación + genera reporte de data drift Evidently
+- **Diario** — job dedicado que agrega errores por estación + totales del día + genera reporte de data drift Evidently
 - **Semanal** — reentrenamiento compara MAE online vs MAE de training y decide si registrar nuevo modelo
 
 ### Job diario de monitorización (`dags/daily_monitoring_dag.py`)
 
-- [ ] **6.1** Crear `src/monitoring/daily_metrics.py`:
+- [x] **6.1** Crear `src/monitoring/daily_metrics.py`:
   - `compute_station_daily_metrics(date, bq_project, bq_dataset) -> list[StationDailyMetrics]`
-    - Lee `predictions` + `station_status_raw` del día anterior para obtener actuals
-    - Calcula MAE/RMSE diario por estación agrupando los N ciclos del día
-    - Retorna lista de `StationDailyMetrics` lista para insertar en BQ
-  - Schema `StationDailyMetrics`: `date`, `station_id`, `model_version`, `n_cycles`, `daily_mae`, `daily_rmse`
-- [ ] **6.2** Crear `src/monitoring/drift_report.py`:
+    - JOIN `predictions` × `station_status_raw` por `station_id` y `target_time = ingestion_timestamp`
+    - GROUP BY `station_id, model_version` → `n_cycles`, `daily_mae`, `daily_rmse`
+    - Retorna `[]` si no hay datos
+  - `compute_overall_daily_metrics(date, bq_project, bq_dataset) -> OverallDailyMetrics | None`
+    - Misma query sin GROUP BY por estación → totales del día (`n_stations`, `n_cycles`, `daily_mae`, `daily_rmse`)
+    - Escribe a tabla `daily_totals` (Terraform añadido en Fase 6)
+  - Schemas en `src/common/schemas.py`: `StationDailyMetrics` y `OverallDailyMetrics`
+  - Bloque `__main__` con `argparse --date` (default: ayer UTC)
+- [x] **6.2** Crear `src/monitoring/drift_report.py`:
   - `generate_daily_drift_report(date, bq_project, bq_dataset, gcs_bucket) -> dict`
-    - Carga features del día desde `station_status_raw`
-    - Carga features del periodo de entrenamiento del modelo activo (ventana de referencia de 28 días)
+    - Carga features del día desde BQ via `_load_bigquery_snapshots` + `build_all_features`
+    - Ventana de referencia: 28 días antes del `saved_at` del modelo activo (= training window por defecto)
     - Calcula data drift con Evidently (`DataDriftPreset`) — solo distribución de features, sin ground truth
-    - Guarda reporte HTML en GCS: `gs://bucket/monitoring/drift/YYYY-MM-DD.html`
+    - Sube a GCS: `monitoring/drift/YYYY-MM-DD.html` (reporte completo) + `YYYY-MM-DD_summary.json` (leído por alertas y dashboard)
     - Retorna dict con `n_drifted_features`, `share_drifted`, `drifted_feature_names`
-  - Nota: el reporte semanal completo (con más contexto) se genera en el DAG de training
-- [ ] **6.3** Crear `src/monitoring/alerts.py`:
+    - Retorna zeros si no hay datos del día (no lanza excepción)
+  - Bloque `__main__` con `argparse --date` (default: ayer UTC)
+- [x] **6.3** Crear `src/monitoring/alerts.py`:
   - `check_performance_alert(bq_project, bq_dataset) -> bool`
     - Lee últimas 24h de `cycle_metrics`; compara MAE medio vs `mae` en `metadata.json` del modelo activo
     - Si MAE online > MAE entrenamiento × 1.20: log warning + retorna True
+    - Retorna False si no hay datos (no alertar por ausencia)
   - `check_drift_alert(drift_summary: dict) -> bool`
     - Si `share_drifted` > 0.30 (más del 30% de features con drift): log warning + retorna True
-- [ ] **6.4** Crear `dags/daily_monitoring_dag.py`:
-  - Schedule: `0 6 * * *` (06:00 UTC, datos del día anterior completos)
-  - Task 1 (`compute_station_metrics`): llama a `compute_station_daily_metrics` → escribe a `station_daily_metrics`
-  - Task 2 (`generate_drift_report`): llama a `generate_daily_drift_report` → HTML a GCS
-  - Task 3 (`run_alerts`): llama a `check_performance_alert` + `check_drift_alert`
-  - Las 3 tasks son independientes (pueden correr en paralelo)
-- [ ] **6.5** Añadir tabla `station_daily_metrics` a Terraform (ya definida en 5.14, aquí se implementa el writer)
-- [ ] **6.6** Crear dashboard simple (Streamlit o HTML estático):
-  - Gráfico de MAE de ciclo (`cycle_metrics`) — últimos 7 días, línea temporal
-  - Tabla de peores estaciones (`station_daily_metrics`) — top 10 por MAE diario
-  - Última ejecución de ingesta y estado del drift report
+  - Bloque `__main__`: lee drift summary del día desde GCS para pasarlo a `check_drift_alert`
+- [x] **6.4** Crear `dags/daily_monitoring_dag.py`:
+  - Schedule: `5 6 * * *` (06:05 UTC — 5 min de margen respecto al DAG de ingesta que corre en xx:00)
+  - Task 1 (`compute_station_metrics`): `python -m src.monitoring.daily_metrics` → escribe a `station_daily_metrics` + `daily_totals`
+  - Task 2 (`generate_drift_report`): `python -m src.monitoring.drift_report` → HTML + JSON a GCS
+  - Task 3 (`run_alerts`): `python -m src.monitoring.alerts` — depende de tasks 1 y 2
+  - `[compute_station_metrics, generate_drift_report] >> run_alerts`
+- [x] **6.5** Writers BQ y tablas Terraform:
+  - `load_station_daily_metrics_to_bigquery` en `src/ingestion/storage.py`
+  - `load_overall_daily_metrics_to_bigquery` en `src/ingestion/storage.py`
+  - Tabla `daily_totals` añadida en `infra/terraform/main.tf` (partición `date` DAY, cluster `model_version`)
+  - Tabla `station_daily_metrics` ya definida en 5.14 (writer implementado aquí)
+  - `load_latest_metadata()` añadido en `src/training/registry.py` (descarga solo `metadata.json`, sin `model.txt`)
+- [x] **6.6** Crear `src/monitoring/dashboard.py` — generador HTML estático:
+  - Consulta BQ (`cycle_metrics` últimos 7 días, `station_daily_metrics` top-10 peores estaciones)
+  - Lee drift summary JSON desde GCS
+  - Genera `index.html` con Chart.js (CDN) y sube a GCS: `monitoring/dashboard/index.html`
+  - Sin servidor ni dependencias nuevas — acceso via signed URL o bucket público
+  - Nota: dashboard Streamlit completo queda para Fase 8.4 en Cloud Run
 
-**Done cuando:** el DAG diario corre sin errores, `station_daily_metrics` se puebla con datos reales, el reporte HTML de drift se genera en GCS, y las alertas se disparan correctamente al simular degradación de MAE.
+**Done cuando:** el código está completo y testado (214 tests, lint+mypy limpios). La verificación con datos reales (DAG ejecutándose en Airflow, tablas pobladas, HTML en GCS) queda pendiente hasta el deploy en GCP (Fase 7).
 
 ---
 
@@ -282,17 +296,38 @@ Dos frecuencias de monitorización:
 - [x] **7.1** Crear `infra/terraform/` con los recursos GCP:
   - VM e2-medium (Airflow) con startup script (Docker + Docker Compose)
   - Cloud Storage bucket con lifecycle rule (borrar tras 365 días)
-  - BigQuery dataset + tabla `station_status_raw` con schema explícito y partición diaria
+  - BigQuery dataset + 5 tablas (`station_status_raw`, `predictions`, `cycle_metrics`, `station_daily_metrics`, `daily_totals`) con schemas explícitos, partición diaria y clustering
   - Secret Manager secrets `bicimad-emt-email` y `bicimad-emt-password`
-  - Service account `bicimad-ingestion` con roles mínimos (GCS objectCreator, BQ dataEditor, secretAccessor)
-- [ ] **7.2** Configurar GitHub Actions:
-  - CI: lint + tests en cada PR
-  - CD: deploy de Cloud Function y actualización de DAGs en la VM
-- [ ] **7.3** Deploy de Airflow en la VM e2-medium
-- [ ] **7.4** Verificar que todo funciona end-to-end en GCP
-- [ ] **7.5** Documentar runbook: cómo desplegar, cómo recuperarse de fallos, cómo forzar reentrenamiento
+  - Service account `bicimad-ingestion` con roles mínimos (GCS objectCreator/Viewer, BQ dataEditor+jobUser, secretAccessor)
+- [x] **7.2** Configurar GitHub Actions:
+  - CI (`.github/workflows/ci.yml`): lint + tests en cada PR y push a main
+  - CD (`.github/workflows/cd.yml`): en merge a main:
+    1. Build + push imagen de training a Artifact Registry
+    2. `gcloud run jobs update bicimad-training` con el nuevo digest
+    3. SSH a VM: `git pull` + `docker compose restart airflow-scheduler`
+  - Autenticación via Workload Identity Federation (sin long-lived keys en CI)
+  - Secrets necesarios: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `AIRFLOW_VM_IP`, `AIRFLOW_VM_SSH_KEY`
+- [x] **7.3** Deploy de Airflow en la VM e2-medium:
+  - Nuevos targets en `Makefile`: `airflow-vars`, `deploy-vm`, `run-training-job`
+  - Setup inicial: clone repo, copiar `gcp-key.json`, editar `airflow.env`, `make airflow-up`, `make airflow-vars`
+  - Pasos manuales adicionales: Artifact Registry, Cloud Run Job, cargar secretos EMT en Secret Manager
+  - Ver `docs/runbook.md` § 2 para instrucciones completas paso a paso
+- [x] **7.4** Checklist de verificación end-to-end:
+  - Ingesta: filas en GCS y `station_status_raw` tras primer ciclo (15 min)
+  - Predicciones: filas en `predictions` tras entrenar un modelo y esperar un ciclo
+  - Reconciliación: filas en `cycle_metrics` tras ~1 h con predicciones activas
+  - Training manual: `gcloud run jobs execute bicimad-training`
+  - Monitorización diaria: trigger manual de `bicimad_daily_monitoring`
+  - Ver `docs/runbook.md` § 3 para todos los comandos de verificación
+- [x] **7.5** Runbook (`docs/runbook.md`):
+  - Arquitectura de despliegue (diagrama)
+  - Primer despliegue paso a paso (Terraform → secretos → Artifact Registry → Cloud Run Job → VM → GitHub Secrets → activar DAGs)
+  - Verificación end-to-end con comandos exactos
+  - Operaciones habituales: update de código, reentrenamiento forzado, backfill, ver logs, restart
+  - Recuperación de fallos: ingesta, training, VM caída, rollback de datos en BQ
+  - Gestión de secretos y rotación
 
-**Done cuando:** el sistema funciona autónomamente en GCP — ingesta cada 15 min, entrenamiento semanal, serving activo, alertas configuradas.
+**Done cuando:** el sistema funciona autónomamente en GCP — ingesta cada 15 min, entrenamiento semanal, alertas configuradas. La verificación real requiere ejecutar los comandos de `docs/runbook.md` § 3 contra el proyecto GCP de producción.
 
 ---
 

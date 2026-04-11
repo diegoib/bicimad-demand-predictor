@@ -123,6 +123,51 @@ def load_latest_model(
     return booster, metadata
 
 
+def load_latest_metadata(
+    model_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Return metadata for the latest model version without loading the model itself.
+
+    Downloads ``metadata.json`` from GCS if no local version exists.  Much
+    lighter than ``load_latest_model`` — suitable for monitoring code that only
+    needs metrics (e.g., ``alerts.py`` comparing online MAE vs training MAE).
+
+    Args:
+        model_dir: Directory containing version subdirectories. Defaults to /tmp/models.
+
+    Returns:
+        Parsed metadata dict (same shape as the second element of ``load_latest_model``).
+
+    Raises:
+        FileNotFoundError: If no versioned model directory is found locally or on GCS.
+    """
+    base_dir = Path(model_dir) if model_dir is not None else _DEFAULT_MODEL_DIR
+
+    if not any(base_dir.glob("v*/")):
+        logger.info("No local models found — downloading latest metadata from GCS...")
+        _download_latest_from_gcs(base_dir, metadata_only=True)
+
+    version_dirs = sorted(base_dir.glob("v*/"))
+    if not version_dirs:
+        raise FileNotFoundError(f"No versioned model found in {base_dir}")
+
+    latest = version_dirs[-1]
+    metadata_path = latest / "metadata.json"
+
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"metadata.json not found in {latest}")
+
+    with metadata_path.open() as f:
+        metadata: dict[str, Any] = json.load(f)
+
+    logger.info(
+        "Loaded metadata for model %s — MAE: %.4f",
+        latest.name,
+        metadata.get("metrics", {}).get("mae", float("nan")),
+    )
+    return metadata
+
+
 def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
     """Upload model files to GCS. Only called in prod mode."""
     try:
@@ -140,8 +185,13 @@ def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
         logger.info("Uploaded %s to gs://%s/%s", local_path.name, _settings.gcs_bucket, blob_name)
 
 
-def _download_latest_from_gcs(base_dir: Path) -> None:
-    """Download the latest model version from GCS to local disk."""
+def _download_latest_from_gcs(base_dir: Path, metadata_only: bool = False) -> None:
+    """Download the latest model version from GCS to local disk.
+
+    Args:
+        base_dir: Local directory to download files into.
+        metadata_only: If True, only download ``metadata.json`` (skip ``model.txt``).
+    """
     try:
         from google.cloud import storage  # type: ignore[attr-defined]
     except ImportError as e:
@@ -164,6 +214,9 @@ def _download_latest_from_gcs(base_dir: Path) -> None:
     for blob in blobs:
         parts = blob.name.split("/")
         if len(parts) >= 3 and parts[1] == latest_version:
-            local_path = version_dir / parts[2]
+            filename = parts[2]
+            if metadata_only and filename != "metadata.json":
+                continue
+            local_path = version_dir / filename
             blob.download_to_filename(str(local_path))
             logger.info("Downloaded %s from GCS", local_path)

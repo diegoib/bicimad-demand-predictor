@@ -2,6 +2,7 @@
 - que el label sea 30m después en vez de 1h
 - añadir un feature importance cuando se entrena el modelo
 - puedo eliminar que se almacenen los datos raw en gcs si directamente se están pasando a BQ? mirar cuanto cuestan
+- revisar todos los make
 
 DONE
 - quitar toda la parte de desarrollo en local, las funciones solo deberían funcionar para prod, no para dev (lo hace todo más complicado)
