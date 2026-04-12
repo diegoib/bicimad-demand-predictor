@@ -24,8 +24,6 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import lightgbm as lgb
-
 from src.common.config import settings
 from src.common.logging_setup import get_logger, setup_logging
 from src.ingestion.bicimad_client import TokenCache, fetch_stations, get_valid_token
@@ -45,10 +43,10 @@ logger = get_logger(__name__)
 # Calling _get_model() downloads once from GCS on first use, then reuses.
 # ---------------------------------------------------------------------------
 
-_model_cache: tuple[lgb.Booster, dict[str, Any]] | None = None
+_model_cache: tuple[Any, dict[str, Any]] | None = None
 
 
-def _get_model() -> tuple[lgb.Booster, dict[str, Any]]:
+def _get_model() -> tuple[Any, dict[str, Any]]:
     """Return the cached model, downloading from GCS on first call."""
     global _model_cache
     if _model_cache is None:
