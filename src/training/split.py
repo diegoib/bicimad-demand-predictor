@@ -14,14 +14,16 @@ from datetime import datetime, timedelta
 
 import polars as pl
 
+from src.common.config import settings
+
 logger = logging.getLogger(__name__)
 
 
 def temporal_split(
     df: pl.DataFrame,
-    train_days: int = 28,
-    val_days: int = 1,
-    test_days: int = 1,
+    train_days: int = settings.train_days,
+    val_days: int = settings.val_days,
+    test_days: int = settings.test_days,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Split a featured DataFrame into train, validation, and test sets by time.
 

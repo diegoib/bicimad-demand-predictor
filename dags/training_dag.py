@@ -60,4 +60,14 @@ with DAG(
         region="{{ var.value.bicimad_gcp_region }}",
         job_name="bicimad-training",
         deferrable=False,  # poll synchronously — simpler on e2-medium
+        # Pass end_date as the day before the DAG execution date: the execution
+        # day itself has incomplete data, so the last full day is ds - 1.
+        # start_date is computed inside train.py from end_date and the split constants.
+        overrides={
+            "containerOverrides": [
+                {
+                    "args": ["--end-date", "{{ macros.ds_add(ds, -1) }}"],
+                }
+            ]
+        },
     )

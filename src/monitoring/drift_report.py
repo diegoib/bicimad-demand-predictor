@@ -1,7 +1,7 @@
 """Daily data drift report using Evidently.
 
 Compares feature distributions of the previous day's data against the
-28-day reference window used to train the active model.  Generates an HTML
+training reference window (train_days) used to train the active model.  Generates an HTML
 report and uploads it to GCS together with a lightweight JSON summary that
 the dashboard and alert checks can read without loading the full HTML.
 
@@ -103,7 +103,7 @@ def generate_daily_drift_report(
         return _empty
 
     ref_end = saved_at.date()
-    ref_start = (saved_at - timedelta(days=28)).date()
+    ref_start = (saved_at - timedelta(days=settings.train_days)).date()
 
     try:
         ref_polars = _load_bigquery_snapshots(ref_start, ref_end)

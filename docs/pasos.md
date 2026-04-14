@@ -275,24 +275,183 @@ Deberías ver filas con `ingestion_timestamp` correspondiente a las últimas eje
 
 ## Parte 3: Entrenamiento del modelo
 
-> *Esta sección se completará próximamente.*
+El modelo se entrena en un **Cloud Run Job** llamado `bicimad-training`. Esto lo mantiene separado de la VM de Airflow (que tiene RAM limitada) y permite ejecutarlo bajo demanda o de forma automática cada semana. El DAG `bicimad_training` lo dispara automáticamente los domingos a las 03:00 UTC.
 
 ---
 
-## Parte 4: Despliegue de la API de predicción
+### Paso 13: Habilitar APIs y crear el repositorio de imágenes
 
-> *Esta sección se completará próximamente.*
+Cloud Run y Artifact Registry no vienen habilitados por defecto. Actívalos y crea el repositorio donde se subirá la imagen Docker del entrenador:
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  --project=TU_PROJECT_ID
+
+gcloud artifacts repositories create bicimad \
+  --repository-format=docker \
+  --location=TU_REGION \
+  --project=TU_PROJECT_ID
+```
+
+Sustituye `TU_REGION` por la región que uses (p. ej. `europe-west1`).
+
+---
+
+### Paso 14: Construir y subir la imagen de entrenamiento
+
+Desde la raíz del repositorio en tu máquina local:
+
+```bash
+# Autenticarse en Artifact Registry
+gcloud auth configure-docker TU_REGION-docker.pkg.dev
+
+# Construir y subir
+docker build -f infra/training/Dockerfile \
+  -t TU_REGION-docker.pkg.dev/TU_PROJECT_ID/bicimad/training:latest \
+  .
+docker push TU_REGION-docker.pkg.dev/TU_PROJECT_ID/bicimad/training:latest
+```
+
+> A partir del primer push a `main`, el pipeline de CI/CD (GitHub Actions) se encargará de reconstruir y actualizar la imagen automáticamente.
+
+---
+
+### Paso 15: Crear el Cloud Run Job
+
+Este comando crea el Job en GCP. Solo hace falta ejecutarlo una vez:
+
+```bash
+gcloud run jobs create bicimad-training \
+  --image TU_REGION-docker.pkg.dev/TU_PROJECT_ID/bicimad/training:latest \
+  --region TU_REGION \
+  --project TU_PROJECT_ID \
+  --service-account bicimad-ingestion@TU_PROJECT_ID.iam.gserviceaccount.com \
+  --set-env-vars "BICIMAD_GCS_BUCKET=TU_BUCKET,BICIMAD_BQ_PROJECT=TU_PROJECT_ID,BICIMAD_BQ_DATASET=bicimad" \
+  --memory 2Gi \
+  --task-timeout 30m
+```
+
+La cuenta de servicio `bicimad-ingestion` es la misma que usa la VM — ya tiene los permisos necesarios sobre GCS y BigQuery (la creó Terraform en el paso 6).
+
+---
+
+### Paso 16: Configurar las variables de Airflow
+
+El DAG de entrenamiento necesita saber en qué proyecto y región está el Cloud Run Job. Configúralo ejecutando esto **en la VM**, dentro del directorio del proyecto:
+
+```bash
+make airflow-vars GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
+```
+
+Esto establece las variables `bicimad_gcp_project` y `bicimad_gcp_region` en Airflow (se guardan en la base de datos de Airflow y persisten entre reinicios).
+
+---
+
+### Paso 17: Lanzar un entrenamiento manual para verificar
+
+Antes de activar el DAG, comprueba que el Job funciona lanzándolo a mano:
+
+```bash
+make run-training-job GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
+```
+
+Puedes seguir los logs en tiempo real en la consola de GCP: **Cloud Run → Jobs → bicimad-training → Executions**.
+
+El Job tarda unos 5-10 minutos la primera vez (descarga datos de BigQuery, entrena LightGBM, sube el modelo a GCS). Cuando termine, verifica que el modelo se guardó correctamente:
+
+```bash
+gsutil ls gs://TU_BUCKET/models/
+```
+
+Deberías ver un directorio con el formato `v20260101_030000/` que contiene `model.txt` y `metadata.json`.
+
+---
+
+### Paso 18: Activar los DAGs de entrenamiento y monitorización
+
+En la UI de Airflow (`http://IP_DE_LA_VM:8080`), activa los dos DAGs restantes:
+
+| DAG | Schedule | Qué hace |
+|---|---|---|
+| `bicimad_training` | Domingos 03:00 UTC | Reentrena el modelo semanalmente con los últimos 28 días de datos |
+| `bicimad_daily_monitoring` | Diariamente 06:05 UTC | Calcula métricas de error del día anterior, genera reporte de drift y lanza alertas si algo va mal |
+
+Para activar cada uno: haz clic en el toggle de la izquierda (pasará de gris a azul).
+
+---
+
+## Parte 4: API de predicción
+
+La API FastAPI en `src/serving/app.py` expone las predicciones que genera el pipeline de ingesta. Lee directamente de la tabla `predictions` en BigQuery — no carga el modelo en memoria, solo sirve resultados ya calculados.
+
+---
+
+### Paso 19: Levantar la API en modo desarrollo
+
+Requiere tener ADC configurado y al menos un ciclo de ingesta completado (para que haya predicciones en BigQuery):
+
+```bash
+gcloud auth application-default login
+export BICIMAD_BQ_PROJECT=TU_PROJECT_ID
+
+make serve
+# API disponible en http://localhost:8000
+# Documentación interactiva en http://localhost:8000/docs
+```
+
+---
+
+### Paso 20: Verificar los endpoints
+
+```bash
+# Liveness check
+curl http://localhost:8000/health
+
+# Predicciones de todas las estaciones (última snapshot disponible)
+curl http://localhost:8000/predictions/latest | python3 -m json.tool | head -40
+
+# Predicción de una estación concreta (p. ej. estación 1)
+curl http://localhost:8000/predictions/1
+```
+
+La respuesta de `/predictions/latest` es una lista de objetos con esta estructura:
+
+```json
+{
+  "station_id": 1,
+  "prediction_made_at": "2026-04-13T06:00:00+00:00",
+  "target_time": "2026-04-13T07:00:00+00:00",
+  "predicted_dock_bikes": 12.4,
+  "model_version": "v20260413_030000"
+}
+```
+
+`prediction_made_at` es el momento en que se tomó el snapshot; `target_time` es t+1h, el momento para el que se predice.
+
+> **Nota:** El despliegue de la API en Cloud Run con acceso público está previsto para la siguiente fase del proyecto. Por ahora, `make serve` es suficiente para verificar que el sistema completo funciona de extremo a extremo.
 
 ---
 
 ## Referencia rápida: comandos más usados
 
 ```bash
-# Levantar Airflow local (desarrollo)
+# Levantar / parar Airflow
 make airflow-up
+make airflow-down
+
+# Configurar variables de Airflow (una vez tras airflow-up, en la VM)
+make airflow-vars GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
 
 # Ejecutar una ingesta manualmente
 python -m src.ingestion.main
+
+# Lanzar el entrenamiento manualmente (Cloud Run Job)
+make run-training-job GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
+
+# Levantar la API de predicciones (modo desarrollo)
+make serve
 
 # Ejecutar los tests
 make test

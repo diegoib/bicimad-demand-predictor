@@ -242,13 +242,22 @@ def train_with_optuna(
 
 if __name__ == "__main__":
     import argparse
+    from datetime import timedelta
 
     setup_logging()
 
     parser = argparse.ArgumentParser(description="Train BiciMAD LightGBM model")
-    parser.add_argument("--start-date", default=None, help="YYYY-MM-DD")
-    parser.add_argument("--end-date", default=None, help="YYYY-MM-DD")
-    parser.add_argument("--train-days", type=int, default=28)
+    parser.add_argument(
+        "--end-date",
+        default=date.today().isoformat(),
+        help="Last date (inclusive) of the training window. Defaults to today. YYYY-MM-DD",
+    )
+    parser.add_argument(
+        "--train-days",
+        type=int,
+        default=None,
+        help="Training window size in days (default: BICIMAD_TRAIN_DAYS env var, fallback 28)",
+    )
     parser.add_argument(
         "--output-dir", default=None, help="Model output directory (default: /tmp/models)"
     )
@@ -256,16 +265,27 @@ if __name__ == "__main__":
     parser.add_argument("--n-trials", type=int, default=50)
     args = parser.parse_args()
 
+    from src.common.config import settings
     from src.features.build_dataset import build_training_dataset
     from src.training.evaluate import evaluate, generate_report
     from src.training.registry import save_model
     from src.training.split import temporal_split
 
-    start = date.fromisoformat(args.start_date) if args.start_date else None
-    end = date.fromisoformat(args.end_date) if args.end_date else None
+    train_days = args.train_days if args.train_days is not None else settings.train_days
+    end = date.fromisoformat(args.end_date)
+    start = end - timedelta(days=train_days + settings.val_days + settings.test_days)
+
+    logger.info(
+        "Training window: %s → %s (%d train + %d val + %d test days)",
+        start,
+        end,
+        train_days,
+        settings.val_days,
+        settings.test_days,
+    )
 
     df = build_training_dataset(start_date=start, end_date=end)
-    train_df, val_df, test_df = temporal_split(df, train_days=args.train_days)
+    train_df, val_df, test_df = temporal_split(df, train_days=train_days)
 
     if args.optuna:
         _, model = train_with_optuna(train_df, val_df, n_trials=args.n_trials)

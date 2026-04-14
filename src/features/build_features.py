@@ -13,6 +13,7 @@ Leakage prevention contract:
 
 import polars as pl
 
+from src.common.config import settings as _settings
 from src.features.holidays import is_holiday
 
 # ---------------------------------------------------------------------------
@@ -200,12 +201,12 @@ def build_historical_features(df: pl.DataFrame) -> pl.DataFrame:
             [
                 pl.col("_daily_mean")
                 .shift(1)
-                .rolling_mean(window_size=7, min_samples=1)
+                .rolling_mean(window_size=_settings.feature_warmup_days, min_samples=1)
                 .over(["station_id", "hour_of_day"])
                 .alias("avg_dock_same_hour_7d"),
                 pl.col("_daily_mean")
                 .shift(1)
-                .rolling_std(window_size=7, min_samples=2)
+                .rolling_std(window_size=_settings.feature_warmup_days, min_samples=2)
                 .over(["station_id", "hour_of_day"])
                 .alias("std_dock_same_hour_7d"),
             ]
@@ -258,7 +259,7 @@ def build_historical_features(df: pl.DataFrame) -> pl.DataFrame:
         .with_columns(
             pl.col("_daily_turnover")
             .shift(1)
-            .rolling_mean(window_size=7, min_samples=1)
+            .rolling_mean(window_size=_settings.feature_warmup_days, min_samples=1)
             .over("station_id")
             .alias("station_daily_turnover")
         )
@@ -278,7 +279,9 @@ def build_historical_features(df: pl.DataFrame) -> pl.DataFrame:
     lookup = df.select(
         [
             pl.col("station_id"),
-            (pl.col("snapshot_timestamp") + pl.duration(days=7)).alias("snapshot_timestamp"),
+            (pl.col("snapshot_timestamp") + pl.duration(days=_settings.feature_warmup_days)).alias(
+                "snapshot_timestamp"
+            ),
             pl.col("dock_bikes").cast(pl.Float64).alias("dock_bikes_same_time_1w"),
         ]
     )

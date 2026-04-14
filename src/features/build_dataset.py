@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -175,7 +175,11 @@ def build_training_dataset(
         Polars DataFrame with 35 feature columns and target_dock_bikes_1h.
         All rows have a non-null target.
     """
-    raw_df = _load_bigquery_snapshots(start_date, end_date)
+    # Load extra history before start_date so rolling/lag features are non-null
+    # at the first training row. When start_date is None (e.g. direct API call)
+    # no warmup is applied and the full table is returned.
+    load_start = start_date - timedelta(days=_settings.feature_warmup_days) if start_date else None
+    raw_df = _load_bigquery_snapshots(load_start, end_date)
 
     # Filter inactive stations before feature engineering
     raw_df = raw_df.filter(pl.col("activate") == 1)
@@ -192,6 +196,11 @@ def build_training_dataset(
 
     # Drop rows without a target (last 4 per station — no future data)
     featured_df = featured_df.filter(pl.col("target_dock_bikes_1h").is_not_null())
+
+    # Remove warmup rows — they were only needed for feature computation
+    if start_date:
+        start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=UTC)
+        featured_df = featured_df.filter(pl.col("snapshot_timestamp") >= start_dt)
 
     logger.info(
         "Featured dataset: %d rows, %d columns",
