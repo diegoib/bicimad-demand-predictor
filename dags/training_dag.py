@@ -65,7 +65,7 @@ with DAG(
         # day itself has incomplete data, so the last full day is ds - 1.
         # start_date is computed inside train.py from end_date and the split constants.
         overrides={
-            "containerOverrides": [
+            "container_overrides": [
                 {
                     "args": ["--end-date", "{{ macros.ds_add(ds, -1) }}"],
                 }
