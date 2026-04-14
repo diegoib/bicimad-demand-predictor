@@ -24,6 +24,7 @@ ingestion = [
 ]
 features = [
     "pandas>=2.1",
+    "db-dtypes>=1.1",
 ]
 training = [
     "lightgbm>=4.1",

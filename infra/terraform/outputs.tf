@@ -33,3 +33,8 @@ output "airflow_ui_url" {
   description = "Airflow webserver URL"
   value       = "http://${google_compute_instance.airflow.network_interface[0].access_config[0].nat_ip}:8080"
 }
+
+output "training_job_name" {
+  description = "Cloud Run Job name for the weekly training pipeline"
+  value       = google_cloud_run_v2_job.training.name
+}

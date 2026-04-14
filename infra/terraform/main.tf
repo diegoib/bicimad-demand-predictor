@@ -29,6 +29,8 @@ resource "google_project_service" "apis" {
     "cloudfunctions.googleapis.com",
     "cloudscheduler.googleapis.com",
     "compute.googleapis.com",
+    "run.googleapis.com",
+    "artifactregistry.googleapis.com",
   ])
   service            = each.key
   disable_on_destroy = false
@@ -249,6 +251,13 @@ resource "google_project_iam_member" "ingestion_secret_accessor" {
   member  = "serviceAccount:${google_service_account.bicimad_ingestion.email}"
 }
 
+# Cloud Run: trigger training job from Airflow (developer includes runWithOverrides)
+resource "google_project_iam_member" "ingestion_run_developer" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${google_service_account.bicimad_ingestion.email}"
+}
+
 # Service account key — download once and store securely
 resource "google_service_account_key" "bicimad_ingestion_key" {
   service_account_id = google_service_account.bicimad_ingestion.name
@@ -328,6 +337,49 @@ resource "google_compute_instance" "airflow" {
     systemctl start docker
     usermod -aG docker $(logname 2>/dev/null || echo debian)
   EOT
+
+  depends_on = [google_project_service.apis]
+}
+
+# ---------------------------------------------------------------------------
+# Cloud Run Job — weekly model training
+# ---------------------------------------------------------------------------
+
+resource "google_cloud_run_v2_job" "training" {
+  name     = "bicimad-training"
+  location = var.region
+
+  template {
+    template {
+      service_account = google_service_account.bicimad_ingestion.email
+      max_retries     = 3
+      timeout         = "1800s"
+
+      containers {
+        image = "${var.region}-docker.pkg.dev/${var.project_id}/bicimad/training:latest"
+
+        resources {
+          limits = {
+            cpu    = "1000m"
+            memory = "2Gi"
+          }
+        }
+
+        env {
+          name  = "BICIMAD_GCP_PROJECT"
+          value = var.project_id
+        }
+        env {
+          name  = "BICIMAD_BQ_DATASET"
+          value = var.bq_dataset_id
+        }
+        env {
+          name  = "BICIMAD_GCS_BUCKET"
+          value = local.bucket_name
+        }
+      }
+    }
+  }
 
   depends_on = [google_project_service.apis]
 }

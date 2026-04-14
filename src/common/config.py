@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     model_version: str = "latest"
 
     # Training split (days)
-    train_days: int = 28
+    train_days: int = 7
     val_days: int = 1
     test_days: int = 1
     # Extra historical days loaded from BQ before start_date to warm up
