@@ -34,8 +34,11 @@ lint:
 # Airflow (local Docker Compose)
 # ---------------------------------------------------------------------------
 
+airflow-build:
+	docker compose -f infra/docker-compose.yml build
+
 airflow-up:
-	docker compose -f infra/docker-compose.yml up -d
+	docker compose -f infra/docker-compose.yml up -d --build
 
 airflow-down:
 	docker compose -f infra/docker-compose.yml down
