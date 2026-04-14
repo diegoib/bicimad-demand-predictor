@@ -6,6 +6,12 @@ RUN pip install --no-cache-dir \
     pydantic>=2.0 \
     pydantic-settings>=2.0 \
     python-dotenv>=1.0 \
+    python-dateutil>=2.8 \
+    holidays>=0.45 \
     google-cloud-storage>=2.10 \
     google-cloud-bigquery>=3.11 \
-    google-cloud-secret-manager>=2.16
+    google-cloud-secret-manager>=2.16 \
+    db-dtypes>=1.1 \
+    pandas>=2.1 \
+    polars>=0.19 \
+    lightgbm>=4.1
