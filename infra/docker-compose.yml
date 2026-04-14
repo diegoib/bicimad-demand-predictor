@@ -55,10 +55,7 @@ services:
       bash -c "
         airflow db migrate &&
         airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true &&
-        airflow connections add google_cloud_default
-          --conn-type google_cloud_platform
-          --conn-extra '{\"key_path\": \"/opt/airflow/keys/gcp-key.json\"}'
-          || true
+        airflow connections add google_cloud_default --conn-type google_cloud_platform --conn-extra '{\"key_path\": \"/opt/airflow/keys/gcp-key.json\"}' || true
       "
     restart: "no"
 
