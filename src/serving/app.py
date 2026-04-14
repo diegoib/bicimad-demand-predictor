@@ -49,14 +49,14 @@ def _load_latest_bigquery() -> list[BatchPredictionRow]:
     except ImportError as e:
         raise ImportError("Install google-cloud-bigquery for prod mode.") from e
 
-    client = bigquery.Client(project=settings.bq_project)
+    client = bigquery.Client(project=settings.gcp_project)
     query = f"""
         SELECT station_id, prediction_made_at, target_time,
                predicted_dock_bikes, model_version
-        FROM `{settings.bq_project}.{settings.bq_dataset}.predictions`
+        FROM `{settings.gcp_project}.{settings.bq_dataset}.predictions`
         WHERE DATE(prediction_made_at) = (
             SELECT MAX(DATE(prediction_made_at))
-            FROM `{settings.bq_project}.{settings.bq_dataset}.predictions`
+            FROM `{settings.gcp_project}.{settings.bq_dataset}.predictions`
         )
         ORDER BY prediction_made_at DESC
         LIMIT 1 OVER (PARTITION BY station_id)

@@ -143,7 +143,7 @@ def _load_drift_summary_from_gcs(target_date: date) -> dict[str, Any]:
     try:
         from google.cloud import storage as gcs  # type: ignore[attr-defined]
 
-        client = gcs.Client(project=settings.bq_project)
+        client = gcs.Client(project=settings.gcp_project)
         bucket = client.bucket(settings.gcs_bucket)
         blob_name = f"monitoring/drift/{target_date}_summary.json"
         blob = bucket.blob(blob_name)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
 
     logger.info("Running alert checks for %s", target)
 
-    perf_fired = check_performance_alert(settings.bq_project, settings.bq_dataset)
+    perf_fired = check_performance_alert(settings.gcp_project, settings.bq_dataset)
     drift_summary = _load_drift_summary_from_gcs(target)
     drift_fired = check_drift_alert(drift_summary)
 

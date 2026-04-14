@@ -195,19 +195,19 @@ if __name__ == "__main__":
     logger.info("Running daily metrics for %s", target)
 
     station_metrics = compute_station_daily_metrics(
-        target, settings.bq_project, settings.bq_dataset
+        target, settings.gcp_project, settings.bq_dataset
     )
     if station_metrics:
         n = load_station_daily_metrics_to_bigquery(
-            station_metrics, settings.bq_project, settings.bq_dataset
+            station_metrics, settings.gcp_project, settings.bq_dataset
         )
         logger.info("Wrote %d station daily metric rows to BQ", n)
     else:
         logger.info("No station metrics to write for %s", target)
 
-    overall = compute_overall_daily_metrics(target, settings.bq_project, settings.bq_dataset)
+    overall = compute_overall_daily_metrics(target, settings.gcp_project, settings.bq_dataset)
     if overall:
-        load_overall_daily_metrics_to_bigquery(overall, settings.bq_project, settings.bq_dataset)
+        load_overall_daily_metrics_to_bigquery(overall, settings.gcp_project, settings.bq_dataset)
         logger.info(
             "Wrote overall daily metrics for %s: mae=%.4f rmse=%.4f",
             target,

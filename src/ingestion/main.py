@@ -116,7 +116,7 @@ def ingest() -> dict[str, Any]:
         row["weather_snapshot"] = weather_dict
         rows.append(row)
 
-    load_to_bigquery(rows, settings.bq_project, settings.bq_dataset, "station_status_raw")
+    load_to_bigquery(rows, settings.gcp_project, settings.bq_dataset, "station_status_raw")
 
     # ------------------------------------------------------------------
     # 5. Batch inference (non-fatal)
@@ -151,7 +151,7 @@ def ingest() -> dict[str, Any]:
         )
         if predictions:
             predictions_written = load_predictions_to_bigquery(
-                predictions, settings.bq_project, settings.bq_dataset
+                predictions, settings.gcp_project, settings.bq_dataset
             )
             logger.info("Wrote %d predictions to BigQuery", predictions_written)
         else:
@@ -167,10 +167,10 @@ def ingest() -> dict[str, Any]:
         from src.monitoring.reconcile import reconcile_predictions
 
         metrics = reconcile_predictions(
-            stations_response, timestamp, settings.bq_project, settings.bq_dataset
+            stations_response, timestamp, settings.gcp_project, settings.bq_dataset
         )
         if metrics:
-            load_cycle_metrics_to_bigquery(metrics, settings.bq_project, settings.bq_dataset)
+            load_cycle_metrics_to_bigquery(metrics, settings.gcp_project, settings.bq_dataset)
             cycle_mae = metrics.mae
             logger.info(
                 "Reconciliation complete: n=%d MAE=%.4f RMSE=%.4f p90=%.4f",

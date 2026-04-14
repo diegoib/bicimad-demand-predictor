@@ -219,7 +219,7 @@ if __name__ == "__main__":
     logger.info("Generating drift report for %s", target)
     summary = generate_daily_drift_report(
         target,
-        settings.bq_project,
+        settings.gcp_project,
         settings.bq_dataset,
         settings.gcs_bucket,
     )

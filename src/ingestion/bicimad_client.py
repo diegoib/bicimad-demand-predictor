@@ -55,9 +55,9 @@ def _credentials_from_secret_manager() -> tuple[str, str]:
     """Fetch EMT credentials from Google Secret Manager."""
     from google.cloud import secretmanager
 
-    project_id = os.environ.get("BICIMAD_BQ_PROJECT", "")
+    project_id = os.environ.get("BICIMAD_GCP_PROJECT", "")
     if not project_id:
-        raise RuntimeError("BICIMAD_BQ_PROJECT must be set to use Secret Manager.")
+        raise RuntimeError("BICIMAD_GCP_PROJECT must be set to use Secret Manager.")
 
     client = secretmanager.SecretManagerServiceClient()
 

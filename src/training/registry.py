@@ -175,7 +175,7 @@ def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to upload models to GCS.") from e
 
-    client = storage.Client(project=_settings.bq_project)
+    client = storage.Client(project=_settings.gcp_project)
     bucket = client.bucket(_settings.gcs_bucket)
 
     for local_path in (model_path, metadata_path):
@@ -197,7 +197,7 @@ def _download_latest_from_gcs(base_dir: Path, metadata_only: bool = False) -> No
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to download models from GCS.") from e
 
-    client = storage.Client(project=_settings.bq_project)
+    client = storage.Client(project=_settings.gcp_project)
     bucket = client.bucket(_settings.gcs_bucket)
 
     blobs = list(bucket.list_blobs(prefix="models/"))

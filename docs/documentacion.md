@@ -371,5 +371,5 @@ El archivo `infra/airflow.env` (nunca commiteado) configura todos los servicios 
 | `AIRFLOW__WEBSERVER__EXPOSE_CONFIG` | Si `true`, la UI muestra la configuración completa de Airflow. En `false` para no exponer información sensible |
 | `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` | Cadena de conexión a PostgreSQL. El hostname `postgres` resuelve al contenedor del mismo nombre dentro de la red de Docker Compose |
 | `BICIMAD_GCS_BUCKET` | Nombre del bucket donde se escriben los snapshots raw |
-| `BICIMAD_BQ_PROJECT` | Project ID de GCP para las queries de BigQuery |
+| `BICIMAD_GCP_PROJECT` | Project ID de GCP para las queries de BigQuery |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Ruta a la clave JSON de la service account dentro del contenedor. Las librerías de Google Cloud la detectan automáticamente |

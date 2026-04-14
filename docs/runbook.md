@@ -121,7 +121,7 @@ gcloud run jobs create bicimad-training \
   --image=europe-west1-docker.pkg.dev/YOUR_PROJECT_ID/bicimad/training:latest \
   --region=europe-west1 \
   --service-account=bicimad-ingestion@YOUR_PROJECT_ID.iam.gserviceaccount.com \
-  --set-env-vars="BICIMAD_GCS_BUCKET=bicimad-data-YOUR_PROJECT_ID,BICIMAD_BQ_PROJECT=YOUR_PROJECT_ID,BICIMAD_BQ_DATASET=bicimad" \
+  --set-env-vars="BICIMAD_GCS_BUCKET=bicimad-data-YOUR_PROJECT_ID,BICIMAD_GCP_PROJECT=YOUR_PROJECT_ID,BICIMAD_BQ_DATASET=bicimad" \
   --memory=4Gi \
   --cpu=2 \
   --max-retries=1 \
@@ -146,7 +146,7 @@ chmod 600 ~/bicimad/infra/gcp-key.json
 
 # 3. Crear airflow.env y rellenar los valores requeridos
 cp infra/airflow.env.example infra/airflow.env
-# Editar: BICIMAD_GCS_BUCKET, BICIMAD_BQ_PROJECT,
+# Editar: BICIMAD_GCS_BUCKET, BICIMAD_GCP_PROJECT,
 #         AIRFLOW__CORE__FERNET_KEY, AIRFLOW__WEBSERVER__SECRET_KEY
 nano infra/airflow.env
 

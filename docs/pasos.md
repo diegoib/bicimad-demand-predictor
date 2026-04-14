@@ -168,8 +168,9 @@ Edita `infra/airflow.env` con un editor de texto (`nano infra/airflow.env`) y re
 |---|---|
 | `AIRFLOW__CORE__FERNET_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `AIRFLOW__WEBSERVER__SECRET_KEY` | `openssl rand -hex 32` |
+| `BICIMAD_GCP_PROJECT` | Tu Project ID de GCP |
+| `BICIMAD_GCP_REGION` | La región donde desplegaste los recursos (p. ej. `europe-west1`) |
 | `BICIMAD_GCS_BUCKET` | El nombre del bucket (sale en `terraform output`) |
-| `BICIMAD_BQ_PROJECT` | Tu Project ID de GCP |
 
 Las variables de SMTP son opcionales — puedes dejarlas vacías si no quieres alertas por email.
 
@@ -211,7 +212,7 @@ Antes de activar el DAG, verifica que el código funciona lanzando una ejecució
 
 ```bash
 gcloud auth application-default login
-export BICIMAD_BQ_PROJECT=bicimad-dev  # o el proyecto que uses
+export BICIMAD_GCP_PROJECT=bicimad-dev  # o el proyecto que uses
 ```
 
 Las credenciales de la API de EMT se leen desde Google Secret Manager (secretos `bicimad-emt-email` y `bicimad-emt-password`). Asegúrate de que existen en tu proyecto GCP.
@@ -307,8 +308,9 @@ Desde la raíz del repositorio en tu máquina local:
 # Autenticarse en Artifact Registry
 gcloud auth configure-docker TU_REGION-docker.pkg.dev
 
-# Construir y subir
-docker build -f infra/training/Dockerfile \
+# Construir y subir (--platform linux/amd64 requerido por Cloud Run)
+docker build --platform linux/amd64 \
+  -f infra/training/Dockerfile \
   -t TU_REGION-docker.pkg.dev/TU_PROJECT_ID/bicimad/training:latest \
   .
 docker push TU_REGION-docker.pkg.dev/TU_PROJECT_ID/bicimad/training:latest
@@ -328,7 +330,7 @@ gcloud run jobs create bicimad-training \
   --region TU_REGION \
   --project TU_PROJECT_ID \
   --service-account bicimad-ingestion@TU_PROJECT_ID.iam.gserviceaccount.com \
-  --set-env-vars "BICIMAD_GCS_BUCKET=TU_BUCKET,BICIMAD_BQ_PROJECT=TU_PROJECT_ID,BICIMAD_BQ_DATASET=bicimad" \
+  --set-env-vars "BICIMAD_GCP_PROJECT=TU_PROJECT_ID,BICIMAD_GCS_BUCKET=TU_BUCKET,BICIMAD_BQ_DATASET=bicimad" \
   --memory 2Gi \
   --task-timeout 30m
 ```
@@ -337,19 +339,7 @@ La cuenta de servicio `bicimad-ingestion` es la misma que usa la VM — ya tiene
 
 ---
 
-### Paso 16: Configurar las variables de Airflow
-
-El DAG de entrenamiento necesita saber en qué proyecto y región está el Cloud Run Job. Configúralo ejecutando esto **en la VM**, dentro del directorio del proyecto:
-
-```bash
-make airflow-vars GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
-```
-
-Esto establece las variables `bicimad_gcp_project` y `bicimad_gcp_region` en Airflow (se guardan en la base de datos de Airflow y persisten entre reinicios).
-
----
-
-### Paso 17: Lanzar un entrenamiento manual para verificar
+### Paso 16: Lanzar un entrenamiento manual para verificar
 
 Antes de activar el DAG, comprueba que el Job funciona lanzándolo a mano:
 
@@ -369,7 +359,7 @@ Deberías ver un directorio con el formato `v20260101_030000/` que contiene `mod
 
 ---
 
-### Paso 18: Activar los DAGs de entrenamiento y monitorización
+### Paso 17: Activar los DAGs de entrenamiento y monitorización
 
 En la UI de Airflow (`http://IP_DE_LA_VM:8080`), activa los dos DAGs restantes:
 
@@ -388,13 +378,13 @@ La API FastAPI en `src/serving/app.py` expone las predicciones que genera el pip
 
 ---
 
-### Paso 19: Levantar la API en modo desarrollo
+### Paso 18: Levantar la API en modo desarrollo
 
 Requiere tener ADC configurado y al menos un ciclo de ingesta completado (para que haya predicciones en BigQuery):
 
 ```bash
 gcloud auth application-default login
-export BICIMAD_BQ_PROJECT=TU_PROJECT_ID
+export BICIMAD_GCP_PROJECT=TU_PROJECT_ID
 
 make serve
 # API disponible en http://localhost:8000
@@ -403,7 +393,7 @@ make serve
 
 ---
 
-### Paso 20: Verificar los endpoints
+### Paso 19: Verificar los endpoints
 
 ```bash
 # Liveness check
@@ -440,9 +430,6 @@ La respuesta de `/predictions/latest` es una lista de objetos con esta estructur
 # Levantar / parar Airflow
 make airflow-up
 make airflow-down
-
-# Configurar variables de Airflow (una vez tras airflow-up, en la VM)
-make airflow-vars GCP_PROJECT=TU_PROJECT_ID GCP_REGION=TU_REGION
 
 # Ejecutar una ingesta manualmente
 python -m src.ingestion.main

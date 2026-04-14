@@ -260,4 +260,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    generate_dashboard(args.date, settings.bq_project, settings.bq_dataset, settings.gcs_bucket)
+    generate_dashboard(args.date, settings.gcp_project, settings.bq_dataset, settings.gcs_bucket)

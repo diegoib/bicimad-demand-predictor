@@ -106,7 +106,7 @@ def _load_bigquery_snapshots(
     except ImportError as e:
         raise ImportError("Install google-cloud-bigquery to load snapshots from BigQuery.") from e
 
-    client = bigquery.Client(project=_settings.bq_project)
+    client = bigquery.Client(project=_settings.gcp_project)
 
     where_clauses = ["s.activate = 1"]
     params = []
@@ -139,7 +139,7 @@ def _load_bigquery_snapshots(
             s.weather_snapshot.weather_code AS weather_code,
             s.weather_snapshot.is_day AS is_day,
             s.weather_snapshot.direct_radiation AS direct_radiation
-        FROM `{_settings.bq_project}.{_settings.bq_dataset}.station_status_raw` s
+        FROM `{_settings.gcp_project}.{_settings.bq_dataset}.station_status_raw` s
         WHERE {where}
     """
 

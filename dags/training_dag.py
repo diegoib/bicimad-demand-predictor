@@ -16,6 +16,7 @@ No business logic lives here — this DAG is pure orchestration.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 
 from airflow import DAG
@@ -56,8 +57,8 @@ with DAG(
 
     train_task = CloudRunExecuteJobOperator(
         task_id="run_training_job",
-        project_id="{{ var.value.bicimad_gcp_project }}",
-        region="{{ var.value.bicimad_gcp_region }}",
+        project_id=os.environ["BICIMAD_GCP_PROJECT"],
+        region=os.environ.get("BICIMAD_GCP_REGION", "europe-west1"),
         job_name="bicimad-training",
         deferrable=False,  # poll synchronously — simpler on e2-medium
         # Pass end_date as the day before the DAG execution date: the execution

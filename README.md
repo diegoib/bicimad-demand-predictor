@@ -33,7 +33,7 @@ Para desarrollo local, configura ADC contra el proyecto `bicimad-dev`:
 
 ```bash
 gcloud auth application-default login
-export BICIMAD_BQ_PROJECT=bicimad-dev
+export BICIMAD_GCP_PROJECT=bicimad-dev
 ```
 
 **Sobre el token**: La API devuelve un `accessToken` que expira cada 24 horas. El sistema lo cachea automáticamente en `/tmp/.bicimad_token_cache.json` (configurable via `BICIMAD_TOKEN_CACHE_PATH`) y lo renueva cuando es necesario.
