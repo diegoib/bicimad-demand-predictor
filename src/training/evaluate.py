@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import lightgbm as lgb
+import numpy as np
 import polars as pl
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
@@ -49,7 +50,7 @@ def evaluate(model: lgb.Booster, df: pl.DataFrame) -> dict[str, float]:
     if len(X) == 0:
         raise ValueError("No non-null target rows to evaluate.")
 
-    preds = model.predict(X)
+    preds = np.clip(np.round(model.predict(X)), 0, None)
 
     mae = float(mean_absolute_error(y, preds))
     rmse = math.sqrt(float(mean_squared_error(y, preds)))
@@ -109,11 +110,9 @@ def evaluate_critical_states(
     if len(X) == 0:
         return {}
 
-    preds = model.predict(X)
+    preds = np.clip(np.round(model.predict(X)), 0, None)
     eval_df = df.filter(pl.col("target_dock_bikes_1h").is_not_null())
     total_bases = eval_df["total_bases"].to_numpy()
-
-    import numpy as np  # noqa: PLC0415
 
     y_np = np.asarray(y.to_numpy(), dtype=np.float64)
     preds_np = np.asarray(preds, dtype=np.float64)

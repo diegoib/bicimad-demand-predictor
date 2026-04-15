@@ -187,6 +187,10 @@ def predict_all_stations(
         .to_list()
     )
 
+    skipped_ids = sorted(set(current_df["station_id"].to_list()) - set(active_ids))
+    if skipped_ids:
+        logger.info("Skipping %d inactive/unavailable stations: %s", len(skipped_ids), skipped_ids)
+
     if not active_ids:
         logger.warning("No active stations in snapshot — skipping prediction")
         return []
@@ -235,7 +239,7 @@ def predict_all_stations(
                 station_id=int(station_id),
                 prediction_made_at=prediction_made_at,
                 target_time=target_time,
-                predicted_dock_bikes=float(pred_value),
+                predicted_dock_bikes=float(max(0, round(pred_value))),
                 model_version=model_version,
             )
         )
