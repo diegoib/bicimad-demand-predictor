@@ -1,3 +1,4 @@
+- la prediccion tiene que ser un entero, y tiene que estar 0 <= x <= bikes capacity
 - ahora solo se tiene el estado del tiempo actual, habría que incluir la previsión del tiempo para el label (1 hora después por ejemplo)
 - que el label sea 30m después en vez de 1h
 - añadir un feature importance cuando se entrena el modelo

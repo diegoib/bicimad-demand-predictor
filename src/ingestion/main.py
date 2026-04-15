@@ -73,7 +73,7 @@ def ingest() -> dict[str, Any]:
     setup_logging()
     logger.info("Starting ingestion cycle")
 
-    timestamp = datetime.now(tz=UTC)
+    timestamp = datetime.now(tz=UTC).replace(second=0, microsecond=0)
 
     # ------------------------------------------------------------------
     # 1. Authenticate (token cached on disk — survives between Airflow runs)
