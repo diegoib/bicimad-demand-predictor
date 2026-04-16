@@ -71,6 +71,5 @@ with DAG(
         bash_command=f"{_CMD_PREFIX} python -m src.monitoring.alerts",
     )
 
-    # compute_station_metrics and generate_drift_report run in parallel;
-    # run_alerts waits for both before checking thresholds.
-    [compute_station_metrics, generate_drift_report] >> run_alerts
+    # Tasks run sequentially to avoid memory contention on the e2-medium VM (4 GB RAM).
+    compute_station_metrics >> generate_drift_report >> run_alerts

@@ -128,18 +128,25 @@ def generate_daily_drift_report(
         logger.warning("Empty reference window (%s→%s) — skipping drift report", ref_start, ref_end)
         return _empty
 
+    # Sample by station before feature engineering so that lag/rolling features
+    # are computed on complete time series per station (not broken random rows).
+    # 100 stations × 7 days × 96 snapshots ≈ 67K rows — enough for drift detection.
+    _DRIFT_STATION_SAMPLE = 100
+    all_station_ids = ref_polars["station_id"].unique().to_list()
+    if len(all_station_ids) > _DRIFT_STATION_SAMPLE:
+        import random
+
+        rng = random.Random(42)
+        sampled_ids = rng.sample(all_station_ids, _DRIFT_STATION_SAMPLE)
+        ref_polars = ref_polars.filter(pl.col("station_id").is_in(sampled_ids))
+        logger.debug(
+            "Reference data sampled to %d stations (%d rows) before feature engineering",
+            _DRIFT_STATION_SAMPLE,
+            len(ref_polars),
+        )
+
     ref_featured = build_all_features(ref_polars)
     ref_df = ref_featured.to_pandas()[feature_cols]
-
-    # Sample to keep memory usage bounded — drift tests are statistically valid
-    # with tens of thousands of rows; millions just cause OOM kills.
-    _MAX_ROWS = 50_000
-    if len(ref_df) > _MAX_ROWS:
-        ref_df = ref_df.sample(n=_MAX_ROWS, random_state=42)
-        logger.debug("Reference dataset sampled to %d rows", _MAX_ROWS)
-    if len(cur_df) > _MAX_ROWS:
-        cur_df = cur_df.sample(n=_MAX_ROWS, random_state=42)
-        logger.debug("Current dataset sampled to %d rows", _MAX_ROWS)
 
     # ------------------------------------------------------------------
     # 3. Run Evidently drift report
