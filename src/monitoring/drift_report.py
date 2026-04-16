@@ -98,7 +98,7 @@ def generate_daily_drift_report(
     cur_df = cur_featured.to_pandas()[feature_cols]
 
     # ------------------------------------------------------------------
-    # 2. Load reference window (28 days before model's saved_at)
+    # 2. Load reference window (train days before model's saved_at)
     # ------------------------------------------------------------------
     try:
         meta = load_latest_metadata()
@@ -130,6 +130,16 @@ def generate_daily_drift_report(
 
     ref_featured = build_all_features(ref_polars)
     ref_df = ref_featured.to_pandas()[feature_cols]
+
+    # Sample to keep memory usage bounded — drift tests are statistically valid
+    # with tens of thousands of rows; millions just cause OOM kills.
+    _MAX_ROWS = 50_000
+    if len(ref_df) > _MAX_ROWS:
+        ref_df = ref_df.sample(n=_MAX_ROWS, random_state=42)
+        logger.debug("Reference dataset sampled to %d rows", _MAX_ROWS)
+    if len(cur_df) > _MAX_ROWS:
+        cur_df = cur_df.sample(n=_MAX_ROWS, random_state=42)
+        logger.debug("Current dataset sampled to %d rows", _MAX_ROWS)
 
     # ------------------------------------------------------------------
     # 3. Run Evidently drift report
