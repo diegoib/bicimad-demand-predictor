@@ -122,29 +122,33 @@ def generate_daily_drift_report(
     # 3. Run Evidently drift report
     # ------------------------------------------------------------------
     try:
-        from evidently.metric_preset import DataDriftPreset
-        from evidently.report import Report
+        from evidently import Report
+        from evidently.presets import DataDriftPreset
     except ImportError as e:
         raise ImportError("Install evidently to generate drift reports.") from e
 
-    report = Report(metrics=[DataDriftPreset()])
-    report.run(reference_data=ref_df, current_data=cur_df)
+    report = Report([DataDriftPreset()])
+    snapshot = report.run(reference_data=ref_df, current_data=cur_df)
 
     # ------------------------------------------------------------------
     # 4. Extract summary
     # ------------------------------------------------------------------
-    report_dict = report.as_dict()
-    dataset_drift = report_dict.get("metrics", [{}])[0].get("result", {}).get("dataset_drift", {})
+    # snapshot.dict() returns {"metrics": [...], "tests": [...]}
+    # metrics[0] is DriftedColumnsCount with value {"count": N, "share": S}
+    # remaining metrics are ValueDrift per column with the p-value as value
+    metrics_list: list[dict[str, Any]] = snapshot.dict().get("metrics", [])
 
-    n_drifted: int = int(dataset_drift.get("number_of_drifted_columns", 0))
-    share_drifted: float = float(dataset_drift.get("share_of_drifted_columns", 0.0))
+    drift_count_metric: dict[str, Any] = next(
+        (m for m in metrics_list if "DriftedColumnsCount" in m.get("metric_name", "")), {}
+    )
+    n_drifted: int = int(drift_count_metric.get("value", {}).get("count", 0))
+    share_drifted: float = float(drift_count_metric.get("value", {}).get("share", 0.0))
+
     drifted_names: list[str] = [
-        col
-        for col, info in report_dict.get("metrics", [{}])[0]
-        .get("result", {})
-        .get("drift_by_columns", {})
-        .items()
-        if info.get("drift_detected", False)
+        m["config"]["column"]
+        for m in metrics_list
+        if "ValueDrift" in m.get("metric_name", "")
+        and m.get("value", 1.0) < m.get("config", {}).get("threshold", 0.05)
     ]
 
     summary = {
@@ -168,14 +172,14 @@ def generate_daily_drift_report(
     # 5. Save HTML + summary JSON to GCS
     # ------------------------------------------------------------------
     try:
-        from google.cloud import storage as gcs  # type: ignore[attr-defined]
+        from google.cloud import storage as gcs
 
         gcs_client = gcs.Client(project=bq_project)
         bucket = gcs_client.bucket(gcs_bucket)
 
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp_html:
             html_path = Path(tmp_html.name)
-        report.save_html(str(html_path))
+        snapshot.save_html(str(html_path))
 
         html_blob_name = f"{_DRIFT_HTML_PREFIX}/{target_date}.html"
         bucket.blob(html_blob_name).upload_from_filename(str(html_path), content_type="text/html")

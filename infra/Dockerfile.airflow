@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir \
     pandas>=2.1 \
     polars>=0.19 \
     lightgbm>=4.1 \
-    evidently>=0.4
+    evidently>=0.7
