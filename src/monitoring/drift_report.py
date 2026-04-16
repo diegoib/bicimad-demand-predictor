@@ -19,6 +19,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import polars as pl
+
 from src.common.config import settings
 from src.common.logging_setup import get_logger, setup_logging
 
@@ -68,8 +70,11 @@ def generate_daily_drift_report(
     # ------------------------------------------------------------------
     # 1. Load current day's features
     # ------------------------------------------------------------------
+    # Load warmup_days of prior data so rolling/lag features (e.g. avg_dock_same_hour_7d)
+    # have enough history. After building features, filter down to target_date only.
+    cur_start = target_date - timedelta(days=settings.feature_warmup_days)
     try:
-        cur_polars = _load_bigquery_snapshots(target_date, target_date)
+        cur_polars = _load_bigquery_snapshots(cur_start, target_date)
     except Exception as exc:
         logger.warning(
             "Could not load snapshots for %s: %s — skipping drift report", target_date, exc
@@ -81,6 +86,14 @@ def generate_daily_drift_report(
         return _empty
 
     cur_featured = build_all_features(cur_polars)
+    # Keep only rows from target_date after feature engineering
+    cur_featured = cur_featured.filter(pl.col("snapshot_timestamp").dt.date() == target_date)
+    if cur_featured.is_empty():
+        logger.info(
+            "No featured rows for %s after warmup load — skipping drift report", target_date
+        )
+        return _empty
+
     feature_cols = _feature_cols(cur_featured.to_pandas())
     cur_df = cur_featured.to_pandas()[feature_cols]
 
