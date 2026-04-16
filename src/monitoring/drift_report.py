@@ -202,7 +202,7 @@ def generate_daily_drift_report(
     # 5. Save HTML + summary JSON to GCS
     # ------------------------------------------------------------------
     try:
-        from google.cloud import storage as gcs
+        from google.cloud import storage as gcs  # type: ignore[attr-defined]
 
         gcs_client = gcs.Client(project=bq_project)
         bucket = gcs_client.bucket(gcs_bucket)
