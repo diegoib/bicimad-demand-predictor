@@ -3,6 +3,7 @@ name: CD
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # Require CI to pass first (GitHub branch protection should enforce this).
 # This workflow only handles deployment — it does NOT re-run lint/tests.
@@ -17,8 +18,6 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write # required for Workload Identity Federation
-
     outputs:
       image: ${{ steps.meta.outputs.image }}
 
@@ -28,8 +27,7 @@ jobs:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
@@ -44,6 +42,7 @@ jobs:
       - name: Build and push
         run: |
           docker build \
+            --provenance=false \
             -f infra/training/Dockerfile \
             -t "${{ steps.meta.outputs.image }}" \
             -t "${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/bicimad/training:latest" \
@@ -61,14 +60,12 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Update Cloud Run Job image
         run: |
@@ -87,16 +84,9 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Add VM SSH key
         run: |
