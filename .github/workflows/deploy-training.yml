@@ -1,0 +1,46 @@
+name: CD — Build & push training image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "infra/training/Dockerfile"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+# Builds the training image and pushes it to Artifact Registry with two tags:
+# - :latest (always used by the Cloud Run Job — no job update needed)
+# - :<short-sha> (for traceability and rollback)
+
+jobs:
+  build-training-image:
+    name: Build training image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          IMAGE_BASE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/bicimad/training"
+          docker build \
+            --provenance=false \
+            -f infra/training/Dockerfile \
+            -t "${IMAGE_BASE}:latest" \
+            -t "${IMAGE_BASE}:${SHORT_SHA}" \
+            .
+          docker push "${IMAGE_BASE}:latest"
+          docker push "${IMAGE_BASE}:${SHORT_SHA}"

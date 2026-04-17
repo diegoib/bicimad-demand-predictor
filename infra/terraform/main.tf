@@ -251,6 +251,13 @@ resource "google_project_iam_member" "ingestion_secret_accessor" {
   member  = "serviceAccount:${google_service_account.bicimad_ingestion.email}"
 }
 
+# Artifact Registry: push training images from CI/CD
+resource "google_project_iam_member" "ingestion_artifactregistry_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.bicimad_ingestion.email}"
+}
+
 # Cloud Run: trigger training job from Airflow (developer includes runWithOverrides)
 resource "google_project_iam_member" "ingestion_run_developer" {
   project = var.project_id
