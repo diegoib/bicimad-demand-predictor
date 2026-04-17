@@ -35,6 +35,6 @@ jobs:
           ssh -i ~/.ssh/bicimad_vm \
               -o StrictHostKeyChecking=yes \
               ${{ secrets.AIRFLOW_VM_USER }}@${{ secrets.AIRFLOW_VM_IP }} \
-            "cd ~/bicimad && \
+            "cd ~/bicimad-demand-predictor && \
              git pull origin main && \
              docker compose -f infra/docker-compose.yml restart airflow-scheduler"
