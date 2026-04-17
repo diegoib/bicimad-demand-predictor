@@ -23,8 +23,8 @@ jobs:
       - name: Add VM SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.AIRFLOW_VM_SSH_KEY }}" > ~/.ssh/bicimad_vm
-          chmod 600 ~/.ssh/bicimad_vm
+          echo "${{ secrets.AIRFLOW_VM_SSH_KEY }}" > ~/.ssh/google_compute_engine
+          chmod 600 ~/.ssh/google_compute_engine
           ssh-keyscan -H "${{ secrets.AIRFLOW_VM_IP }}" >> ~/.ssh/known_hosts
 
       - name: Pull latest code + restart Airflow scheduler
@@ -32,7 +32,7 @@ jobs:
         # After git pull the scheduler auto-picks up new DAGs within 30 s
         # (dag_dir_list_interval default). We restart it to force immediate reload.
         run: |
-          ssh -i ~/.ssh/bicimad_vm \
+          ssh -i ~/.ssh/google_compute_engine \
               -o StrictHostKeyChecking=yes \
               debian@${{ secrets.AIRFLOW_VM_IP }} \
             "cd ~/bicimad && \
