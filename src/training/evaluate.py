@@ -155,6 +155,81 @@ def evaluate_critical_states(
     return result
 
 
+def compute_feature_importance(model: lgb.Booster) -> dict[str, list[dict[str, Any]]]:
+    """Compute gain and split feature importance from a trained LightGBM model.
+
+    Args:
+        model: Trained LightGBM Booster.
+
+    Returns:
+        Dictionary with keys ``by_gain`` and ``by_split``, each a list of dicts
+        sorted descending by importance. Each dict contains the feature name,
+        raw importance value, and percentage of total.
+    """
+    names = model.feature_name()
+    gains = model.feature_importance(importance_type="gain").tolist()
+    splits = model.feature_importance(importance_type="split").tolist()
+
+    total_gain = sum(gains) or 1.0
+    total_split = sum(splits) or 1.0
+
+    by_gain = sorted(
+        [
+            {"feature": n, "gain": round(g, 4), "gain_pct": round(g / total_gain * 100, 2)}
+            for n, g in zip(names, gains)
+        ],
+        key=lambda x: x["gain"],
+        reverse=True,
+    )
+    by_split = sorted(
+        [
+            {"feature": n, "split": s, "split_pct": round(s / total_split * 100, 2)}
+            for n, s in zip(names, splits)
+        ],
+        key=lambda x: x["split"],
+        reverse=True,
+    )
+    return {"by_gain": by_gain, "by_split": by_split}
+
+
+def plot_feature_importance(
+    importance_data: dict[str, list[dict[str, Any]]],
+    output_path: str | Path,
+    top_n: int = 20,
+) -> None:
+    """Save a horizontal bar chart of the top features by gain to disk.
+
+    Args:
+        importance_data: Output of ``compute_feature_importance``.
+        output_path: Path for the output PNG file.
+        top_n: Number of top features to plot (sorted by gain descending).
+    """
+    import matplotlib  # noqa: PLC0415
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # noqa: PLC0415
+
+    top = importance_data["by_gain"][:top_n]
+    # Reverse so highest-gain feature appears at the top of the chart
+    features = [r["feature"] for r in reversed(top)]
+    values = [r["gain_pct"] for r in reversed(top)]
+
+    fig, ax = plt.subplots(figsize=(10, max(6, top_n * 0.4)))
+    ax.barh(features, values, color="#4C72B0")
+    ax.set_xlabel("Gain (%)")
+    ax.set_title(f"Feature Importance — Top {len(top)} by Gain")
+    ax.xaxis.grid(True, linestyle="--", alpha=0.5)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=120)
+    plt.close(fig)
+
+    logger.info("Feature importance plot saved to %s", output_path)
+
+
 def generate_report(
     metrics: dict[str, Any],
     output_path: str | Path,

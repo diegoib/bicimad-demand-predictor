@@ -1,9 +1,8 @@
-- arreglar los github actions
+- añadir un feature importance cuando se entrena el modelo
+- actualizar readme y docs de knowledge base
 - ahora solo se tiene el estado del tiempo actual, habría que incluir la previsión del tiempo para el label (1 hora después por ejemplo)
 - que el label sea 30m después en vez de 1h
-- añadir un feature importance cuando se entrena el modelo
 - puedo eliminar que se almacenen los datos raw en gcs si directamente se están pasando a BQ? mirar cuanto cuestan
-- revisar todos los make
 - que el registry no sea en gcs con un archivo de metadata, que lo maneje alguna herramienta (a lo mejor artifact registry de gcp también sirve para este fin)
 - mejorar el reporte de evidently (detecta drift en variables como dia de la semana, is weekend, distrito), algunas por el sampleo de estaciones
 
@@ -12,3 +11,5 @@ DONE
 - por qué no se hace la prediccion de las 634 estaciones? por que no están operativas
 - la prediccion tiene que ser un entero, y tiene que estar 0 <= x <= bikes capacity
 - alinear los mypys de local, precommit y github ci
+- arreglar los github actions
+- revisar todos los make

@@ -267,7 +267,7 @@ if __name__ == "__main__":
 
     from src.common.config import settings
     from src.features.build_dataset import build_training_dataset
-    from src.training.evaluate import evaluate, generate_report
+    from src.training.evaluate import compute_feature_importance, evaluate, generate_report
     from src.training.registry import save_model
     from src.training.split import temporal_split
 
@@ -300,6 +300,10 @@ if __name__ == "__main__":
     output_dir = Path(args.output_dir) if args.output_dir else None
     version_dir = save_model(model, metrics, output_dir=output_dir)
     print(f"Model saved to {version_dir}")
+
+    importance = compute_feature_importance(model)
+    top5 = ", ".join(f"{r['feature']} ({r['gain_pct']}%)" for r in importance["by_gain"][:5])
+    print(f"Top features (gain): {top5}")
 
     report_path = version_dir / "evaluation_report.json"
     generate_report(metrics, report_path, model=model)

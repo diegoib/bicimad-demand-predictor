@@ -1,6 +1,6 @@
 .PHONY: setup features train serve test lint \
-        airflow-up airflow-down airflow-vars \
-        deploy-vm run-training-job
+        airflow-up airflow-down \
+        run-training-job
 
 PYTHON := python
 SRC_DIR := src
@@ -34,33 +34,15 @@ lint:
 # Airflow (local Docker Compose)
 # ---------------------------------------------------------------------------
 
-airflow-build:
-	docker compose -f infra/docker-compose.yml build
-
 airflow-up:
 	docker compose -f infra/docker-compose.yml up -d --build
 
 airflow-down:
 	docker compose -f infra/docker-compose.yml down
 
-## Set required Airflow Variables (run once on the VM after airflow-up).
-## Usage: make airflow-vars GCP_PROJECT=my-project GCP_REGION=europe-west1
-airflow-vars:
-	docker compose -f infra/docker-compose.yml exec airflow-webserver \
-		airflow variables set bicimad_gcp_project "$(GCP_PROJECT)"
-	docker compose -f infra/docker-compose.yml exec airflow-webserver \
-		airflow variables set bicimad_gcp_region "$(GCP_REGION)"
-
 # ---------------------------------------------------------------------------
 # GCP deployment
 # ---------------------------------------------------------------------------
-
-## Pull latest code on the Airflow VM and restart the scheduler.
-## Usage: make deploy-vm VM_IP=1.2.3.4 VM_KEY=~/.ssh/bicimad_vm
-deploy-vm:
-	ssh -i "$(VM_KEY)" -o StrictHostKeyChecking=yes debian@$(VM_IP) \
-		"cd ~/bicimad && git pull origin main && \
-		 docker compose -f infra/docker-compose.yml restart airflow-scheduler"
 
 ## Trigger the Cloud Run training job manually.
 ## Usage: make run-training-job GCP_PROJECT=my-project GCP_REGION=europe-west1

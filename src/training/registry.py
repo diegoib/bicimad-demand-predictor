@@ -38,14 +38,25 @@ def save_model(
 ) -> Path:
     """Save a trained LightGBM model and its metadata to disk and GCS.
 
+    Artifacts written to the version directory:
+    - model.txt: LightGBM native text format.
+    - metadata.json: metrics, feature names, top features by gain.
+    - feature_importance.json: gain and split importance for all features.
+    - feature_importance.png: bar chart of top 20 features by gain.
+
     Args:
         model: Trained LightGBM Booster.
         metrics: Evaluation metrics dict (from `evaluate`).
         output_dir: Local directory for model storage. Defaults to /tmp/models.
 
     Returns:
-        Path to the version directory containing model.txt and metadata.json.
+        Path to the version directory containing all artifacts.
     """
+    from src.training.evaluate import (  # noqa: PLC0415
+        compute_feature_importance,
+        plot_feature_importance,
+    )
+
     base_dir = Path(output_dir) if output_dir is not None else _DEFAULT_MODEL_DIR
     version = f"v{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     version_dir = base_dir / version
@@ -56,7 +67,23 @@ def save_model(
     model.save_model(str(model_path))
     logger.info("Model saved to %s", model_path)
 
-    # Save metadata
+    # Compute feature importance
+    importance = compute_feature_importance(model)
+    top_features = [
+        {"feature": r["feature"], "gain_pct": r["gain_pct"]} for r in importance["by_gain"][:5]
+    ]
+
+    # Save feature_importance.json
+    fi_json_path = version_dir / "feature_importance.json"
+    with fi_json_path.open("w") as f:
+        json.dump(importance, f, indent=2)
+    logger.info("Feature importance JSON saved to %s", fi_json_path)
+
+    # Save feature_importance.png
+    fi_png_path = version_dir / "feature_importance.png"
+    plot_feature_importance(importance, fi_png_path)
+
+    # Save metadata (includes top_features for quick inspection)
     metadata: dict[str, Any] = {
         "version": version,
         "saved_at": datetime.now(UTC).isoformat(),
@@ -65,6 +92,7 @@ def save_model(
         "num_features": len(ALL_FEATURE_COLS),
         "num_trees": model.num_trees(),
         "best_iteration": model.best_iteration,
+        "top_features": top_features,
         "metrics": metrics,
     }
     metadata_path = version_dir / "metadata.json"
@@ -72,7 +100,7 @@ def save_model(
         json.dump(metadata, f, indent=2)
     logger.info("Metadata saved to %s", metadata_path)
 
-    _upload_to_gcs(model_path, metadata_path, version)
+    _upload_to_gcs(version_dir, version)
 
     return version_dir
 
@@ -168,8 +196,13 @@ def load_latest_metadata(
     return metadata
 
 
-def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
-    """Upload model files to GCS. Only called in prod mode."""
+def _upload_to_gcs(version_dir: Path, version: str) -> None:
+    """Upload all files in a version directory to GCS.
+
+    Args:
+        version_dir: Local directory containing model artifacts.
+        version: Version string (e.g. ``v20260101_120000``) used as GCS prefix.
+    """
     try:
         from google.cloud import storage  # type: ignore[attr-defined]
     except ImportError as e:
@@ -178,7 +211,9 @@ def _upload_to_gcs(model_path: Path, metadata_path: Path, version: str) -> None:
     client = storage.Client(project=_settings.gcp_project)
     bucket = client.bucket(_settings.gcs_bucket)
 
-    for local_path in (model_path, metadata_path):
+    for local_path in sorted(version_dir.iterdir()):
+        if not local_path.is_file():
+            continue
         blob_name = f"models/{version}/{local_path.name}"
         blob = bucket.blob(blob_name)
         blob.upload_from_filename(str(local_path))
