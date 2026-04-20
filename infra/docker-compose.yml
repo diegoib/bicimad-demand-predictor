@@ -44,6 +44,7 @@ services:
       interval: 10s
       retries: 5
       start_period: 5s
+    mem_limit: 256m
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -52,20 +53,20 @@ services:
   # model artifacts in GCS under gs://$BICIMAD_GCS_BUCKET/mlflow-artifacts/.
   # --------------------------------------------------------------------------
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.11.1
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
     env_file:
       - airflow.env
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /keys/gcp-key.json
-    entrypoint:
+    command:
       - bash
       - -c
-    command:
       - |
-        pip install --quiet google-cloud-storage psycopg2-binary &&
         mlflow server \
           --backend-store-uri postgresql+psycopg2://airflow:airflow@postgres:5432/mlflow \
-          --artifacts-destination gs://$BICIMAD_GCS_BUCKET/mlflow-artifacts \
+          --artifacts-destination gs://$$BICIMAD_GCS_BUCKET/mlflow-artifacts \
           --host 0.0.0.0 \
           --port 5000
     volumes:
@@ -77,6 +78,7 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    mem_limit: 256m
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -84,29 +86,13 @@ services:
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
-    entrypoint:
-      - bash
-      - -c
-    command:
-      - |
-        python3 -c "
-        import psycopg2
-        try:
-            conn = psycopg2.connect(host='postgres', user='airflow', password='airflow', dbname='postgres')
-            conn.autocommit = True
-            conn.cursor().execute('CREATE DATABASE mlflow')
-            conn.close()
-            print('mlflow database created')
-        except Exception as e:
-            print(f'mlflow db already exists or error: {e}')
-        " &&
+    command: >
+      bash -c "
+        python3 -c \"import psycopg2; c=psycopg2.connect(host='postgres',user='airflow',password='airflow',dbname='postgres'); c.autocommit=True; c.cursor().execute('CREATE DATABASE mlflow'); c.close()\" || true &&
         airflow db migrate &&
-        airflow users create \
-          --username admin --firstname Admin --lastname User \
-          --role Admin --email admin@bicimad.local --password admin || true &&
-        airflow connections add google_cloud_default \
-          --conn-type google_cloud_platform \
-          --conn-extra '{"key_path": "/opt/airflow/keys/gcp-key.json"}' || true
+        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true &&
+        airflow connections add google_cloud_default --conn-type google_cloud_platform --conn-extra '{\"key_path\": \"/opt/airflow/keys/gcp-key.json\"}' || true
+      "
     restart: "no"
 
   # --------------------------------------------------------------------------
@@ -115,6 +101,9 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
+    environment:
+      PYTHONPATH: /opt/airflow/project
+      AIRFLOW__WEBSERVER__WORKER_CLASS: gevent
     ports:
       - "8080:8080"
     healthcheck:
@@ -123,6 +112,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    mem_limit: 512m
     restart: unless-stopped
     depends_on:
       postgres:
@@ -136,12 +126,17 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    environment:
+      PYTHONPATH: /opt/airflow/project
+      AIRFLOW__CORE__PARALLELISM: "2"
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "2"
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+    mem_limit: 512m
     restart: unless-stopped
     depends_on:
       postgres:
