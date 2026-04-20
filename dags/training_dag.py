@@ -79,11 +79,16 @@ with DAG(
     # Runs on the Airflow VM so it can reach mlflow:5000 directly.
     # ------------------------------------------------------------------
 
-    from src.training.registry import register_and_promote
+    def _register_and_promote(**kwargs: object) -> None:
+        from src.training.registry import (
+            register_and_promote,  # lazy import — avoids loading lightgbm/matplotlib at DAG parse time
+        )
+
+        register_and_promote()
 
     register_task = PythonOperator(
         task_id="register_and_promote",
-        python_callable=register_and_promote,
+        python_callable=_register_and_promote,
     )
 
     train_task >> register_task
