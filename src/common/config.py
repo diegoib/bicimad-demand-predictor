@@ -25,8 +25,11 @@ class Settings(BaseSettings):
     gcs_bucket: str = "bicimad-data"
     bq_dataset: str = "bicimad"
 
-    # Model
-    model_version: str = "latest"
+    # MLflow Model Registry
+    mlflow_tracking_uri: str = "http://mlflow:5000"
+    mlflow_model_name: str = "bicimad-forecast"
+    mlflow_prod_alias: str = "prod"
+    mlflow_experiment: str = "bicimad-demand-forecast"
 
     # Training split (days)
     train_days: int = 7

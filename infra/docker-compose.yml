@@ -29,7 +29,7 @@ x-airflow-common: &airflow-common
 
 services:
   # --------------------------------------------------------------------------
-  # Metadata database
+  # Metadata database — shared by Airflow (db: airflow) and MLflow (db: mlflow)
   # --------------------------------------------------------------------------
   postgres:
     image: postgres:15-alpine
@@ -39,6 +39,7 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -47,16 +48,64 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # One-shot initialiser: run DB migrations + create admin user
+  # MLflow tracking server — http://<host>:5000
+  # Uses the same postgres instance (separate 'mlflow' database) and stores
+  # model artifacts in GCS under gs://$BICIMAD_GCS_BUCKET/mlflow-artifacts/.
+  # --------------------------------------------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.11.1
+    env_file:
+      - airflow.env
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /keys/gcp-key.json
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - |
+        pip install --quiet google-cloud-storage psycopg2-binary &&
+        mlflow server \
+          --backend-store-uri postgresql+psycopg2://airflow:airflow@postgres:5432/mlflow \
+          --artifacts-destination gs://$BICIMAD_GCS_BUCKET/mlflow-artifacts \
+          --host 0.0.0.0 \
+          --port 5000
+    volumes:
+      - ./gcp-key.json:/keys/gcp-key.json:ro
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # One-shot initialiser: create mlflow DB + run Airflow migrations + admin user
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
-    command: >
-      bash -c "
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - |
+        python3 -c "
+        import psycopg2
+        try:
+            conn = psycopg2.connect(host='postgres', user='airflow', password='airflow', dbname='postgres')
+            conn.autocommit = True
+            conn.cursor().execute('CREATE DATABASE mlflow')
+            conn.close()
+            print('mlflow database created')
+        except Exception as e:
+            print(f'mlflow db already exists or error: {e}')
+        " &&
         airflow db migrate &&
-        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true &&
-        airflow connections add google_cloud_default --conn-type google_cloud_platform --conn-extra '{\"key_path\": \"/opt/airflow/keys/gcp-key.json\"}' || true
-      "
+        airflow users create \
+          --username admin --firstname Admin --lastname User \
+          --role Admin --email admin@bicimad.local --password admin || true &&
+        airflow connections add google_cloud_default \
+          --conn-type google_cloud_platform \
+          --conn-extra '{"key_path": "/opt/airflow/keys/gcp-key.json"}' || true
     restart: "no"
 
   # --------------------------------------------------------------------------

@@ -7,10 +7,7 @@ from src.monitoring.alerts import check_drift_alert, check_performance_alert
 _PROJECT = "test-project"
 _DATASET = "bicimad"
 
-_TRAINING_META = {
-    "version": "v20260115_100000",
-    "metrics": {"mae": 2.0, "rmse": 2.5},
-}
+_PROD_METRICS = {"mae": 2.0, "version": "3", "run_id": "abc123"}
 
 
 def _patch_bq_avg_mae(avg_mae: float | None) -> MagicMock:
@@ -44,7 +41,7 @@ class TestCheckPerformanceAlert:
         mock_bq = _patch_bq_avg_mae(2.5)
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch("src.monitoring.alerts.load_latest_metadata", return_value=_TRAINING_META),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=_PROD_METRICS),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is True
@@ -54,7 +51,7 @@ class TestCheckPerformanceAlert:
         mock_bq = _patch_bq_avg_mae(2.2)
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch("src.monitoring.alerts.load_latest_metadata", return_value=_TRAINING_META),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=_PROD_METRICS),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is False
@@ -63,7 +60,7 @@ class TestCheckPerformanceAlert:
         mock_bq = _patch_bq_empty()
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch("src.monitoring.alerts.load_latest_metadata", return_value=_TRAINING_META),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=_PROD_METRICS),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is False
@@ -72,19 +69,16 @@ class TestCheckPerformanceAlert:
         mock_bq = _patch_bq_avg_mae(None)
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch("src.monitoring.alerts.load_latest_metadata", return_value=_TRAINING_META),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=_PROD_METRICS),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is False
 
-    def test_false_when_no_model_metadata(self) -> None:
+    def test_false_when_no_prod_model(self) -> None:
         mock_bq = _patch_bq_avg_mae(3.0)
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch(
-                "src.monitoring.alerts.load_latest_metadata",
-                side_effect=FileNotFoundError("no model"),
-            ),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=None),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is False
@@ -94,7 +88,7 @@ class TestCheckPerformanceAlert:
         mock_bq = _patch_bq_avg_mae(2.0 * 1.20)
         with (
             patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq}),
-            patch("src.monitoring.alerts.load_latest_metadata", return_value=_TRAINING_META),
+            patch("src.monitoring.alerts.get_prod_model_metrics", return_value=_PROD_METRICS),
         ):
             result = check_performance_alert(_PROJECT, _DATASET)
         assert result is False
