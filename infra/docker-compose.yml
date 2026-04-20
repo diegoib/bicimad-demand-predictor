@@ -104,6 +104,7 @@ services:
     environment:
       PYTHONPATH: /opt/airflow/project
       AIRFLOW__WEBSERVER__WORKER_CLASS: gevent
+      AIRFLOW__WEBSERVER__WORKERS: "2"
     ports:
       - "8080:8080"
     healthcheck:
@@ -112,7 +113,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    mem_limit: 512m
+    mem_limit: 768m
     restart: unless-stopped
     depends_on:
       postgres:
