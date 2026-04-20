@@ -130,13 +130,14 @@ services:
       PYTHONPATH: /opt/airflow/project
       AIRFLOW__CORE__PARALLELISM: "2"
       AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "2"
+      AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT: "120"
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-    mem_limit: 512m
+    mem_limit: 1500m
     restart: unless-stopped
     depends_on:
       postgres:
