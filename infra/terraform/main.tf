@@ -349,6 +349,72 @@ resource "google_compute_instance" "airflow" {
 }
 
 # ---------------------------------------------------------------------------
+# MLflow VM — e2-small
+# ---------------------------------------------------------------------------
+
+resource "google_compute_instance" "mlflow" {
+  name         = "bicimad-mlflow"
+  machine_type = "e2-small"
+  zone         = "${var.region}-b"
+
+  tags = ["mlflow"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+    }
+  }
+
+  network_interface {
+    network = "default"
+    access_config {}  # ephemeral public IP for SSH/maintenance
+  }
+
+  service_account {
+    email  = google_service_account.bicimad_ingestion.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -e
+    systemd-run --property="After=apt-daily.service apt-daily-upgrade.service" \
+      --wait /bin/true 2>/dev/null || true
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+    apt-get update -qq
+    apt-get install -y -qq ca-certificates curl gnupg git make
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    systemctl enable docker
+    systemctl start docker
+    usermod -aG docker $(logname 2>/dev/null || echo debian)
+  EOT
+
+  depends_on = [google_project_service.apis]
+}
+
+# Firewall — MLflow UI accessible from browser and from the Airflow VM
+resource "google_compute_firewall" "mlflow_webserver" {
+  name    = "allow-mlflow-webserver"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5000"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]  # Restrict to your IP in production
+  target_tags   = ["mlflow"]
+}
+
+# ---------------------------------------------------------------------------
 # Cloud Run Job — weekly model training
 # ---------------------------------------------------------------------------
 

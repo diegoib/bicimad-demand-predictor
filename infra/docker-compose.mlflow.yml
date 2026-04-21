@@ -1,0 +1,59 @@
+# MLflow tracking server — runs on bicimad-mlflow (e2-small)
+#
+# Usage on the MLflow VM:
+#   1. cp infra/mlflow.env.example infra/mlflow.env  &&  fill in values
+#   2. Place the GCP service account key at infra/gcp-key.json
+#   3. make mlflow-up
+
+services:
+  # --------------------------------------------------------------------------
+  # MLflow metadata database — dedicated postgres for MLflow only
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mlflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    mem_limit: 256m
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # MLflow tracking server — http://0.0.0.0:5000
+  # --------------------------------------------------------------------------
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    env_file:
+      - mlflow.env
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /keys/gcp-key.json
+    command:
+      - bash
+      - -c
+      - |
+        mlflow server \
+          --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow \
+          --artifacts-destination gs://$$BICIMAD_GCS_BUCKET/mlflow-artifacts \
+          --host 0.0.0.0 \
+          --port 5000
+    volumes:
+      - ./gcp-key.json:/keys/gcp-key.json:ro
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+
+volumes:
+  mlflow-postgres-data:

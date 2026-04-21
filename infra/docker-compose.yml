@@ -48,47 +48,12 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # MLflow tracking server — http://<host>:5000
-  # Uses the same postgres instance (separate 'mlflow' database) and stores
-  # model artifacts in GCS under gs://$BICIMAD_GCS_BUCKET/mlflow-artifacts/.
-  # --------------------------------------------------------------------------
-  mlflow:
-    build:
-      context: .
-      dockerfile: Dockerfile.mlflow
-    env_file:
-      - airflow.env
-    environment:
-      GOOGLE_APPLICATION_CREDENTIALS: /keys/gcp-key.json
-    command:
-      - bash
-      - -c
-      - |
-        mlflow server \
-          --backend-store-uri postgresql+psycopg2://airflow:airflow@postgres:5432/mlflow \
-          --artifacts-destination gs://$$BICIMAD_GCS_BUCKET/mlflow-artifacts \
-          --host 0.0.0.0 \
-          --port 5000
-    volumes:
-      - ./gcp-key.json:/keys/gcp-key.json:ro
-    ports:
-      - "5000:5000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-    mem_limit: 256m
-    restart: unless-stopped
-
-  # --------------------------------------------------------------------------
-  # One-shot initialiser: create mlflow DB + run Airflow migrations + admin user
+  # One-shot initialiser: run Airflow migrations + create admin user
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
     command: >
       bash -c "
-        python3 -c \"import psycopg2; c=psycopg2.connect(host='postgres',user='airflow',password='airflow',dbname='postgres'); c.autocommit=True; c.cursor().execute('CREATE DATABASE mlflow'); c.close()\" || true &&
         airflow db migrate &&
         airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@bicimad.local --password admin || true &&
         airflow connections add google_cloud_default --conn-type google_cloud_platform --conn-extra '{\"key_path\": \"/opt/airflow/keys/gcp-key.json\"}' || true
