@@ -44,7 +44,9 @@ services:
           --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow \
           --artifacts-destination gs://$$BICIMAD_GCS_BUCKET/mlflow-artifacts \
           --host 0.0.0.0 \
-          --port 5000
+          --port 5000 \
+          --allowed-hosts "*" \
+          --cors-allowed-origins "*"
     volumes:
       - ./gcp-key.json:/keys/gcp-key.json:ro
     ports:
