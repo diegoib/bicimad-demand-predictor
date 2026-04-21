@@ -79,18 +79,18 @@ resource "google_bigquery_table" "station_status_raw" {
   clustering = ["id"]
 
   schema = jsonencode([
-    { name = "id",           type = "INTEGER",   mode = "REQUIRED",  description = "Station internal ID (EMT)" },
-    { name = "number",       type = "STRING",    mode = "NULLABLE",  description = "Human-readable station number" },
-    { name = "name",         type = "STRING",    mode = "NULLABLE",  description = "Station name" },
-    { name = "activate",     type = "INTEGER",   mode = "NULLABLE",  description = "1 = active, 0 = inactive" },
-    { name = "no_available", type = "INTEGER",   mode = "NULLABLE",  description = "1 = not available, 0 = available" },
-    { name = "total_bases",  type = "INTEGER",   mode = "NULLABLE",  description = "Total docking slots" },
-    { name = "dock_bikes",   type = "INTEGER",   mode = "NULLABLE",  description = "Bikes currently docked (available to rent)" },
-    { name = "free_bases",   type = "INTEGER",   mode = "NULLABLE",  description = "Free docking slots (available to return)" },
+    { name = "id", type = "INTEGER", mode = "REQUIRED", description = "Station internal ID (EMT)" },
+    { name = "number", type = "STRING", mode = "NULLABLE", description = "Human-readable station number" },
+    { name = "name", type = "STRING", mode = "NULLABLE", description = "Station name" },
+    { name = "activate", type = "INTEGER", mode = "NULLABLE", description = "1 = active, 0 = inactive" },
+    { name = "no_available", type = "INTEGER", mode = "NULLABLE", description = "1 = not available, 0 = available" },
+    { name = "total_bases", type = "INTEGER", mode = "NULLABLE", description = "Total docking slots" },
+    { name = "dock_bikes", type = "INTEGER", mode = "NULLABLE", description = "Bikes currently docked (available to rent)" },
+    { name = "free_bases", type = "INTEGER", mode = "NULLABLE", description = "Free docking slots (available to return)" },
     {
       name = "geometry", type = "RECORD", mode = "NULLABLE",
       fields = [
-        { name = "type",        type = "STRING",  mode = "NULLABLE" },
+        { name = "type", type = "STRING", mode = "NULLABLE" },
         { name = "coordinates", type = "FLOAT64", mode = "REPEATED", description = "[longitude, latitude]" }
       ]
     },
@@ -98,15 +98,15 @@ resource "google_bigquery_table" "station_status_raw" {
     {
       name = "weather_snapshot", type = "RECORD", mode = "NULLABLE",
       fields = [
-        { name = "timestamp",                 type = "TIMESTAMP", mode = "NULLABLE" },
-        { name = "temperature_2m",            type = "FLOAT64",   mode = "NULLABLE", description = "Air temperature at 2m, °C" },
-        { name = "apparent_temperature",      type = "FLOAT64",   mode = "NULLABLE", description = "Feels-like temperature, °C" },
-        { name = "precipitation",             type = "FLOAT64",   mode = "NULLABLE", description = "Precipitation mm" },
-        { name = "precipitation_probability", type = "FLOAT64",   mode = "NULLABLE", description = "Probability of precipitation, %" },
-        { name = "wind_speed_10m",            type = "FLOAT64",   mode = "NULLABLE", description = "Wind speed at 10m, km/h" },
-        { name = "weather_code",              type = "INTEGER",   mode = "NULLABLE", description = "WMO weather interpretation code" },
-        { name = "is_day",                    type = "INTEGER",   mode = "NULLABLE", description = "1 = daytime, 0 = nighttime" },
-        { name = "direct_radiation",          type = "FLOAT64",   mode = "NULLABLE", description = "Direct solar radiation, W/m²" }
+        { name = "timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
+        { name = "temperature_2m", type = "FLOAT64", mode = "NULLABLE", description = "Air temperature at 2m, °C" },
+        { name = "apparent_temperature", type = "FLOAT64", mode = "NULLABLE", description = "Feels-like temperature, °C" },
+        { name = "precipitation", type = "FLOAT64", mode = "NULLABLE", description = "Precipitation mm" },
+        { name = "precipitation_probability", type = "FLOAT64", mode = "NULLABLE", description = "Probability of precipitation, %" },
+        { name = "wind_speed_10m", type = "FLOAT64", mode = "NULLABLE", description = "Wind speed at 10m, km/h" },
+        { name = "weather_code", type = "INTEGER", mode = "NULLABLE", description = "WMO weather interpretation code" },
+        { name = "is_day", type = "INTEGER", mode = "NULLABLE", description = "1 = daytime, 0 = nighttime" },
+        { name = "direct_radiation", type = "FLOAT64", mode = "NULLABLE", description = "Direct solar radiation, W/m²" }
       ]
     }
   ])
@@ -129,11 +129,11 @@ resource "google_bigquery_table" "predictions" {
   clustering = ["station_id"]
 
   schema = jsonencode([
-    { name = "station_id",           type = "INTEGER",   mode = "REQUIRED", description = "Station internal ID (EMT)" },
-    { name = "prediction_made_at",   type = "TIMESTAMP", mode = "REQUIRED", description = "UTC snapshot timestamp when prediction was made (t)" },
-    { name = "target_time",          type = "TIMESTAMP", mode = "REQUIRED", description = "UTC time the prediction applies to (t+1h)" },
-    { name = "predicted_dock_bikes", type = "FLOAT64",   mode = "REQUIRED", description = "Predicted number of docked bikes at target_time" },
-    { name = "model_version",        type = "STRING",    mode = "REQUIRED", description = "Model version string (e.g. v20260115_100000)" }
+    { name = "station_id", type = "INTEGER", mode = "REQUIRED", description = "Station internal ID (EMT)" },
+    { name = "prediction_made_at", type = "TIMESTAMP", mode = "REQUIRED", description = "UTC snapshot timestamp when prediction was made (t)" },
+    { name = "target_time", type = "TIMESTAMP", mode = "REQUIRED", description = "UTC time the prediction applies to (t+1h)" },
+    { name = "predicted_dock_bikes", type = "FLOAT64", mode = "REQUIRED", description = "Predicted number of docked bikes at target_time" },
+    { name = "model_version", type = "STRING", mode = "REQUIRED", description = "Model version string (e.g. v20260115_100000)" }
   ])
 }
 
@@ -150,16 +150,16 @@ resource "google_bigquery_table" "cycle_metrics" {
   clustering = ["model_version"]
 
   schema = jsonencode([
-    { name = "cycle_timestamp",    type = "TIMESTAMP", mode = "REQUIRED", description = "Snapshot timestamp that was reconciled (T-1h)" },
-    { name = "model_version",      type = "STRING",    mode = "REQUIRED", description = "Model version string" },
-    { name = "n_predictions",      type = "INTEGER",   mode = "REQUIRED", description = "Number of stations reconciled in this cycle" },
-    { name = "mae",                type = "FLOAT64",   mode = "REQUIRED", description = "Mean absolute error across all reconciled stations" },
-    { name = "rmse",               type = "FLOAT64",   mode = "REQUIRED", description = "Root mean squared error" },
-    { name = "p50_error",          type = "FLOAT64",   mode = "REQUIRED", description = "Median absolute error (50th percentile)" },
-    { name = "p90_error",          type = "FLOAT64",   mode = "REQUIRED", description = "90th percentile absolute error" },
-    { name = "worst_station_id",   type = "INTEGER",   mode = "REQUIRED", description = "Station ID with the highest absolute error" },
-    { name = "worst_station_error",type = "FLOAT64",   mode = "REQUIRED", description = "Absolute error of the worst station" },
-    { name = "reconciled_at",      type = "TIMESTAMP", mode = "REQUIRED", description = "UTC timestamp when reconciliation ran" }
+    { name = "cycle_timestamp", type = "TIMESTAMP", mode = "REQUIRED", description = "Snapshot timestamp that was reconciled (T-1h)" },
+    { name = "model_version", type = "STRING", mode = "REQUIRED", description = "Model version string" },
+    { name = "n_predictions", type = "INTEGER", mode = "REQUIRED", description = "Number of stations reconciled in this cycle" },
+    { name = "mae", type = "FLOAT64", mode = "REQUIRED", description = "Mean absolute error across all reconciled stations" },
+    { name = "rmse", type = "FLOAT64", mode = "REQUIRED", description = "Root mean squared error" },
+    { name = "p50_error", type = "FLOAT64", mode = "REQUIRED", description = "Median absolute error (50th percentile)" },
+    { name = "p90_error", type = "FLOAT64", mode = "REQUIRED", description = "90th percentile absolute error" },
+    { name = "worst_station_id", type = "INTEGER", mode = "REQUIRED", description = "Station ID with the highest absolute error" },
+    { name = "worst_station_error", type = "FLOAT64", mode = "REQUIRED", description = "Absolute error of the worst station" },
+    { name = "reconciled_at", type = "TIMESTAMP", mode = "REQUIRED", description = "UTC timestamp when reconciliation ran" }
   ])
 }
 
@@ -176,12 +176,12 @@ resource "google_bigquery_table" "daily_totals" {
   clustering = ["model_version"]
 
   schema = jsonencode([
-    { name = "date",          type = "DATE",    mode = "REQUIRED", description = "Calendar date (UTC)" },
-    { name = "model_version", type = "STRING",  mode = "REQUIRED", description = "Model version used for predictions on this date" },
-    { name = "n_stations",    type = "INTEGER", mode = "REQUIRED", description = "Number of distinct stations with predictions on this date" },
-    { name = "n_cycles",      type = "INTEGER", mode = "REQUIRED", description = "Total (station, cycle) pairs reconciled on this date" },
-    { name = "daily_mae",     type = "FLOAT64", mode = "REQUIRED", description = "Overall mean absolute error across all stations and cycles" },
-    { name = "daily_rmse",    type = "FLOAT64", mode = "REQUIRED", description = "Overall root mean squared error" }
+    { name = "date", type = "DATE", mode = "REQUIRED", description = "Calendar date (UTC)" },
+    { name = "model_version", type = "STRING", mode = "REQUIRED", description = "Model version used for predictions on this date" },
+    { name = "n_stations", type = "INTEGER", mode = "REQUIRED", description = "Number of distinct stations with predictions on this date" },
+    { name = "n_cycles", type = "INTEGER", mode = "REQUIRED", description = "Total (station, cycle) pairs reconciled on this date" },
+    { name = "daily_mae", type = "FLOAT64", mode = "REQUIRED", description = "Overall mean absolute error across all stations and cycles" },
+    { name = "daily_rmse", type = "FLOAT64", mode = "REQUIRED", description = "Overall root mean squared error" }
   ])
 }
 
@@ -198,12 +198,12 @@ resource "google_bigquery_table" "station_daily_metrics" {
   clustering = ["station_id"]
 
   schema = jsonencode([
-    { name = "date",          type = "DATE",    mode = "REQUIRED", description = "Calendar date (UTC)" },
-    { name = "station_id",    type = "INTEGER", mode = "REQUIRED", description = "Station internal ID (EMT)" },
-    { name = "model_version", type = "STRING",  mode = "REQUIRED", description = "Model version used for predictions on this date" },
-    { name = "n_cycles",      type = "INTEGER", mode = "REQUIRED", description = "Number of cycles reconciled for this station on this date" },
-    { name = "daily_mae",     type = "FLOAT64", mode = "REQUIRED", description = "Mean absolute error across all cycles for this station and date" },
-    { name = "daily_rmse",    type = "FLOAT64", mode = "REQUIRED", description = "Root mean squared error across all cycles" }
+    { name = "date", type = "DATE", mode = "REQUIRED", description = "Calendar date (UTC)" },
+    { name = "station_id", type = "INTEGER", mode = "REQUIRED", description = "Station internal ID (EMT)" },
+    { name = "model_version", type = "STRING", mode = "REQUIRED", description = "Model version used for predictions on this date" },
+    { name = "n_cycles", type = "INTEGER", mode = "REQUIRED", description = "Number of cycles reconciled for this station on this date" },
+    { name = "daily_mae", type = "FLOAT64", mode = "REQUIRED", description = "Mean absolute error across all cycles for this station and date" },
+    { name = "daily_rmse", type = "FLOAT64", mode = "REQUIRED", description = "Root mean squared error across all cycles" }
   ])
 }
 
@@ -308,13 +308,13 @@ resource "google_compute_instance" "airflow" {
   boot_disk {
     initialize_params {
       image = "debian-cloud/debian-12"
-      size  = 20  # GB
+      size  = 20 # GB
     }
   }
 
   network_interface {
     network = "default"
-    access_config {}  # ephemeral public IP
+    access_config {} # ephemeral public IP
   }
 
   service_account {
@@ -349,15 +349,17 @@ resource "google_compute_instance" "airflow" {
 }
 
 # ---------------------------------------------------------------------------
-# MLflow VM — e2-small
+# MLflow VM — e2-medium
 # ---------------------------------------------------------------------------
 
 resource "google_compute_instance" "mlflow" {
   name         = "bicimad-mlflow"
-  machine_type = "e2-small"
+  machine_type = "e2-medium"
   zone         = "${var.region}-b"
 
   tags = ["mlflow"]
+
+  allow_stopping_for_update = true
 
   boot_disk {
     initialize_params {
@@ -368,7 +370,7 @@ resource "google_compute_instance" "mlflow" {
 
   network_interface {
     network = "default"
-    access_config {}  # ephemeral public IP for SSH/maintenance
+    access_config {} # ephemeral public IP for SSH/maintenance
   }
 
   service_account {
@@ -410,7 +412,7 @@ resource "google_compute_firewall" "mlflow_webserver" {
     ports    = ["5000"]
   }
 
-  source_ranges = ["0.0.0.0/0"]  # Restrict to your IP in production
+  source_ranges = ["0.0.0.0/0"] # Restrict to your IP in production
   target_tags   = ["mlflow"]
 }
 
@@ -467,6 +469,6 @@ resource "google_compute_firewall" "airflow_webserver" {
     ports    = ["8080"]
   }
 
-  source_ranges = ["0.0.0.0/0"]  # Restrict to your IP in production
+  source_ranges = ["0.0.0.0/0"] # Restrict to your IP in production
   target_tags   = ["airflow"]
 }

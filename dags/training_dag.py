@@ -1,6 +1,6 @@
-"""Airflow DAG — BiciMAD weekly model training.
+"""Airflow DAG — BiciMAD daily model training.
 
-Schedule: Sunday at 03:00 UTC.
+Schedule: Every day at 03:00 UTC.
 Launches a Cloud Run Job that runs the full training pipeline:
   1. Builds the training dataset from BigQuery (expanding window)
   2. Temporal split (train / val / test)
@@ -47,8 +47,8 @@ default_args = {
 
 with DAG(
     dag_id="bicimad_training",
-    description="Weekly BiciMAD LightGBM training + MLflow registration",
-    schedule="0 3 * * 0",  # Sunday at 03:00 UTC
+    description="Daily BiciMAD LightGBM training + MLflow registration",
+    schedule="0 3 * * *",  # Every day at 03:00 UTC
     start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
