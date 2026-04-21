@@ -54,7 +54,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    mem_limit: 512m
     restart: unless-stopped
 
 volumes:
