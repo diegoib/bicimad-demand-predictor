@@ -1,5 +1,6 @@
 .PHONY: setup features train serve test lint \
         airflow-up airflow-down \
+        mlflow-up mlflow-down \
         run-training-job
 
 PYTHON := python
@@ -39,6 +40,16 @@ airflow-up:
 
 airflow-down:
 	docker compose -f infra/docker-compose.yml down
+
+# ---------------------------------------------------------------------------
+# MLflow (separate Docker Compose — runs on bicimad-mlflow VM)
+# ---------------------------------------------------------------------------
+
+mlflow-up:
+	docker compose -f infra/docker-compose.mlflow.yml up -d --build
+
+mlflow-down:
+	docker compose -f infra/docker-compose.mlflow.yml down
 
 # ---------------------------------------------------------------------------
 # GCP deployment

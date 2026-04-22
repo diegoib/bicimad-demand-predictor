@@ -29,7 +29,7 @@ x-airflow-common: &airflow-common
 
 services:
   # --------------------------------------------------------------------------
-  # Metadata database
+  # Metadata database — shared by Airflow (db: airflow) and MLflow (db: mlflow)
   # --------------------------------------------------------------------------
   postgres:
     image: postgres:15-alpine
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # One-shot initialiser: run DB migrations + create admin user
+  # One-shot initialiser: run Airflow migrations + create admin user
   # --------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
@@ -65,6 +65,10 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
+    environment:
+      PYTHONPATH: /opt/airflow/project
+      AIRFLOW__WEBSERVER__WORKER_CLASS: gevent
+      AIRFLOW__WEBSERVER__WORKERS: "2"
     ports:
       - "8080:8080"
     healthcheck:
@@ -86,6 +90,11 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    environment:
+      PYTHONPATH: /opt/airflow/project
+      AIRFLOW__CORE__PARALLELISM: "2"
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "2"
+      AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT: "120"
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
       interval: 30s

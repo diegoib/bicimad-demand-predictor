@@ -47,12 +47,12 @@ _model_cache: tuple[Any, dict[str, Any]] | None = None
 
 
 def _get_model() -> tuple[Any, dict[str, Any]]:
-    """Return the cached model, downloading from GCS on first call."""
+    """Return the cached model, loading the @prod alias from MLflow on first call."""
     global _model_cache
     if _model_cache is None:
-        from src.training.registry import load_latest_model
+        from src.training.registry import load_prod_model
 
-        _model_cache = load_latest_model()
+        _model_cache = load_prod_model()
     return _model_cache
 
 

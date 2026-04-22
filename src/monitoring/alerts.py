@@ -23,7 +23,7 @@ from typing import Any
 
 from src.common.config import settings
 from src.common.logging_setup import get_logger, setup_logging
-from src.training.registry import load_latest_metadata
+from src.training.registry import get_prod_model_metrics
 
 logger = get_logger(__name__)
 
@@ -67,15 +67,14 @@ def check_performance_alert(bq_project: str, bq_dataset: str) -> bool:
     online_mae: float = float(rows[0]["avg_mae"])
 
     # ------------------------------------------------------------------
-    # Load training MAE from model metadata
+    # Load training MAE from the current @prod model in MLflow
     # ------------------------------------------------------------------
-    try:
-        meta = load_latest_metadata()
-    except FileNotFoundError:
-        logger.warning("No trained model metadata found — skipping performance alert")
+    prod = get_prod_model_metrics()
+    if prod is None:
+        logger.warning("No @prod model in MLflow registry — skipping performance alert")
         return False
 
-    training_mae: float = float(meta.get("metrics", {}).get("mae", float("nan")))
+    training_mae: float = float(prod.get("mae", float("nan")))
     if not (training_mae > 0):
         logger.warning(
             "Invalid training MAE in metadata: %s — skipping performance alert", training_mae
@@ -141,7 +140,7 @@ def _yesterday_utc() -> date:
 def _load_drift_summary_from_gcs(target_date: date) -> dict[str, Any]:
     """Download the JSON drift summary written by drift_report.py."""
     try:
-        from google.cloud import storage as gcs  # type: ignore[attr-defined]
+        import google.cloud.storage as gcs
 
         client = gcs.Client(project=settings.gcp_project)
         bucket = client.bucket(settings.gcs_bucket)
