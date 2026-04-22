@@ -56,7 +56,7 @@ def write_raw_to_gcs(
     Returns:
         Full ``gs://`` URI of the uploaded blob.
     """
-    from google.cloud import storage  # type: ignore[attr-defined]
+    import google.cloud.storage as storage
 
     partition = _partition_key(timestamp)
     blob_name = f"{prefix}/{partition}" if prefix else partition

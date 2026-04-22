@@ -206,7 +206,7 @@ def _get_latest_gcs_version() -> str:
         FileNotFoundError: If no model versions exist in GCS.
     """
     try:
-        from google.cloud import storage  # type: ignore[attr-defined]
+        import google.cloud.storage as storage
     except ImportError as e:
         raise ImportError("Install google-cloud-storage.") from e
 
@@ -227,7 +227,7 @@ def _download_version_from_gcs(version: str, dest_dir: Path) -> None:
         dest_dir: Local directory to write files into (created if needed).
     """
     try:
-        from google.cloud import storage  # type: ignore[attr-defined]
+        import google.cloud.storage as storage
     except ImportError as e:
         raise ImportError("Install google-cloud-storage.") from e
 
@@ -341,6 +341,8 @@ def get_prod_model_metrics() -> dict[str, Any] | None:
     except Exception:
         return None
 
+    if not mv.run_id:
+        return None
     run = client.get_run(mv.run_id)
     mae = run.data.metrics.get("mae")
     if mae is None:
@@ -498,7 +500,7 @@ def _upload_to_gcs(version_dir: Path, version: str) -> None:
         version: Version string (e.g. ``v20260101_120000``) used as GCS prefix.
     """
     try:
-        from google.cloud import storage  # type: ignore[attr-defined]
+        import google.cloud.storage as storage
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to upload models to GCS.") from e
 
@@ -522,7 +524,7 @@ def _download_latest_from_gcs(base_dir: Path, metadata_only: bool = False) -> No
         metadata_only: If True, only download ``metadata.json`` (skip ``model.txt``).
     """
     try:
-        from google.cloud import storage  # type: ignore[attr-defined]
+        import google.cloud.storage as storage
     except ImportError as e:
         raise ImportError("Install google-cloud-storage to download models from GCS.") from e
 

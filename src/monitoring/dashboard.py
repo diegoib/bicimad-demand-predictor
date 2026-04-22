@@ -96,7 +96,7 @@ def _fetch_top10_stations(
 
 def _fetch_drift_summary(gcs_bucket: str, bq_project: str, target_date: date) -> dict[str, Any]:
     try:
-        from google.cloud import storage as gcs  # type: ignore[attr-defined]
+        import google.cloud.storage as gcs
 
         client = gcs.Client(project=bq_project)
         bucket = client.bucket(gcs_bucket)
@@ -235,7 +235,7 @@ def generate_dashboard(
 
     html = _build_html(target_date, cycle_mae_rows, top10, drift_summary)
 
-    from google.cloud import storage as gcs  # type: ignore[attr-defined]
+    from google.cloud import storage as gcs
 
     client = gcs.Client(project=bq_project)
     bucket = client.bucket(gcs_bucket)

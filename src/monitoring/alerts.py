@@ -140,7 +140,7 @@ def _yesterday_utc() -> date:
 def _load_drift_summary_from_gcs(target_date: date) -> dict[str, Any]:
     """Download the JSON drift summary written by drift_report.py."""
     try:
-        from google.cloud import storage as gcs  # type: ignore[attr-defined]
+        import google.cloud.storage as gcs
 
         client = gcs.Client(project=settings.gcp_project)
         bucket = client.bucket(settings.gcs_bucket)
