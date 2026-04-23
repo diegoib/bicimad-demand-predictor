@@ -1,0 +1,4 @@
+- el evaluation report al final del entrenamiento se tiene que guardar en gcs?
+- ahora solo se tiene el estado del tiempo actual, habría que incluir la previsión del tiempo para el label (1 hora después por ejemplo)
+- cambiar a un label secuencial, bikes en los próximos 15min, 30min, 45min y 1h
+- mejorar el reporte de evidently (detecta drift en variables como dia de la semana, is weekend, distrito), algunas por el sampleo de estaciones

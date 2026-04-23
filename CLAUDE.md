@@ -1,6 +1,6 @@
 # CLAUDE.md — Instrucciones para Claude Code
 
-Este repositorio contiene un sistema batch de ML para predecir la disponibilidad de bicicletas en las estaciones de BiciMAD (Madrid). Lee `PLAN.md` para las tareas de implementación.
+Este repositorio contiene un sistema batch de ML para predecir la disponibilidad de bicicletas en las estaciones de BiciMAD (Madrid).
 
 ## Stack y versiones
 
@@ -8,10 +8,10 @@ Este repositorio contiene un sistema batch de ML para predecir la disponibilidad
 - LightGBM (modelo principal)
 - Optuna (hyperparameter tuning)
 - FastAPI (serving)
-- Apache Airflow 2.x (orquestación, self-hosted con Docker Compose)
-- Google Cloud: Cloud Functions, Cloud Storage, BigQuery, Cloud Scheduler
+- Apache Airflow 2.x (orquestación, self-hosted en VM GCP con Docker Compose)
+- MLflow (model registry, self-hosted en VM GCP con Docker Compose)
+- Google Cloud: Cloud Storage, BigQuery, Cloud Run Jobs, Artifact Registry
 - Pydantic v2 (validación de schemas y configuración)
-- BigQuery para almacenamiento y consultas de datos
 - pytest para tests
 
 ## Estructura del repositorio
@@ -19,27 +19,25 @@ Este repositorio contiene un sistema batch de ML para predecir la disponibilidad
 ```
 bicimad-demand-forecast/
 ├── src/
-│   ├── ingestion/          # Cloud Function de ingesta
+│   ├── ingestion/          # Clientes de API y escritura en GCS/BQ
 │   ├── features/           # Feature engineering
-│   ├── training/           # Pipeline de entrenamiento
+│   ├── training/           # Pipeline de entrenamiento y model registry
 │   ├── serving/            # API FastAPI
 │   ├── monitoring/         # Drift + alertas
 │   └── common/             # Código compartido (schemas, config, logging)
 ├── dags/                   # DAGs de Airflow (orquestación pura)
 ├── tests/                  # Tests unitarios por módulo
-├── infra/                  # Terraform + docker-compose.yml
-├── docs/                   # Design doc y documentación
-├── notebooks/              # Exploración y análisis (no producción)
+├── infra/                  # Terraform + docker-compose.yml + docker-compose.mlflow.yml
+├── docs/                   # Documentación
 ├── pyproject.toml          # Dependencias unificadas
-├── Makefile                # Comandos: make ingest, make train, make serve
-├── PLAN.md                 # Tareas de implementación (checklist)
+├── Makefile                # Comandos: make train, make serve, make test…
 └── CLAUDE.md               # Este archivo
 ```
 
 ## Convenciones de código
 
 ### General
-- Código y comentarios en **inglés**. Documentación de usuario y README en español.
+- Código y comentarios en **inglés**.
 - Type hints en todas las funciones públicas.
 - Docstrings en formato Google style.
 - Imports absolutos desde la raíz del paquete: `from src.common.schemas import StationSnapshot`.
@@ -101,14 +99,18 @@ bicimad-demand-forecast/
 ## Comandos útiles (Makefile)
 
 ```
-make setup          # Instalar dependencias y pre-commit hooks
-make features       # Construir dataset de features desde BigQuery
-make train          # Entrenar modelo (requiere ADC configurado)
-make serve          # Levantar API FastAPI en modo desarrollo
-make test           # Ejecutar tests
-make lint           # Ruff + mypy
-make airflow-up     # Levantar Airflow local con Docker Compose
-make airflow-down   # Parar Airflow
+make setup              # Instalar dependencias y pre-commit hooks
+make features           # Construir dataset de features desde BigQuery
+make train              # Entrenar modelo (requiere ADC configurado)
+make serve              # Levantar API FastAPI en modo desarrollo
+make test               # Ejecutar tests
+make lint               # Ruff + mypy
+make airflow-up         # Levantar Airflow local con Docker Compose
+make airflow-down       # Parar Airflow
+make mlflow-up          # Levantar MLflow tracking server con Docker Compose
+make mlflow-down        # Parar MLflow
+make deploy-training    # Build y push imagen de training a Artifact Registry
+make run-training-job   # Disparar el Cloud Run Job de training manualmente
 ```
 
 ## Decisiones ya tomadas (no reconsiderar)
@@ -124,6 +126,5 @@ make airflow-down   # Parar Airflow
 
 ## Cuando no sepas qué hacer
 
-1. Consulta `PLAN.md` para ver la siguiente tarea pendiente.
-2. Consulta `src/common/schemas.py` para contratos de datos.
-3. Si hay ambigüedad, pregunta antes de implementar.
+1. Consulta `src/common/schemas.py` para contratos de datos.
+2. Si hay ambigüedad, pregunta antes de implementar.

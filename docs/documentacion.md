@@ -120,7 +120,8 @@ Apache Airflow es un **orquestador de pipelines**: no ejecuta lógica de negocio
 
 En este proyecto Airflow se encarga de dos pipelines:
 - **Ingesta** (`bicimad_ingestion`): cada 15 minutos, llama a `src/ingestion/main.py` para capturar el estado de las 634 estaciones de BiciMAD y los datos meteorológicos y escribirlos en GCS y BigQuery.
-- **Entrenamiento** (pendiente): semanalmente, construirá el dataset de features, entrenará el modelo LightGBM y lo registrará en GCS.
+- **Entrenamiento** (`bicimad_training`): diariamente a las 03:00 UTC, lanza un Cloud Run Job que construye el dataset de features, entrena el modelo LightGBM y lo registra en GCS y MLflow.
+- **Monitorización** (`bicimad_daily_monitoring`): diariamente a las 06:05 UTC, agrega métricas de error, genera el drift report y ejecuta las alertas.
 
 ---
 
@@ -351,7 +352,7 @@ El archivo `infra/gcp-key.json` (la clave de la service account descargada con `
 | **Escalado** | Manual (redimensionar la VM) | Automático — K8s crea un pod por tarea y lo destruye al terminar |
 | **Distribución de DAGs** | Bind mount desde el mismo servidor | git-sync sidecar (sincroniza desde Git automáticamente) o bucket GCS/S3 |
 | **Secretos** | Variables en `airflow.env` en el servidor | Secrets Backend integrado (GCP Secret Manager, HashiCorp Vault) |
-| **CI/CD** | Ninguno todavía | Deploy automático de DAGs en cada merge a main |
+| **CI/CD** | 3 workflows: lint+tests en PR, build imagen de training, deploy DAGs a VM vía SSH | Deploy automático de DAGs en cada merge a main |
 | **Monitorización** | Logs en la UI de Airflow | Integración con Datadog, PagerDuty, alertas en Slack |
 | **Coste** | ~13 $/mes (VM e2-medium) | 300–2000 $/mes según número de workers y escala |
 
@@ -520,3 +521,380 @@ Todas configurables en `infra/airflow.env` con el prefijo `BICIMAD_`:
 | **Version** | Snapshot inmutable de un modelo registrado, ligado a un run | versión 7 |
 | **Alias** | Etiqueta mutable que apunta a una versión concreta | `@prod` → versión 7 |
 | **Artifact Store** | Dónde se guardan los archivos (modelo, plots…) | GCS `mlflow-artifacts/` |
+
+---
+
+# Logging
+
+## Librería y formato
+
+El proyecto usa la librería estándar de Python `logging` — sin dependencias externas como `structlog` o `loguru`. Lo que sí tiene de custom es un **formatter JSON** definido en `src/common/logging_setup.py`.
+
+Cada línea de log sale como un objeto JSON en una sola línea:
+
+```json
+{"timestamp": "2026-04-23T03:00:12.345Z", "severity": "INFO", "logger": "src.training.train", "message": "Training complete — MAE: 1.8432"}
+```
+
+El motivo de usar JSON en lugar del formato de texto clásico (`%(asctime)s - %(name)s - %(levelname)s - %(message)s`) es que **Cloud Logging** (el servicio de logs de GCP) parsea JSON automáticamente y crea campos estructurados filtrables. Con texto plano, el campo `message` sería un string opaco. Con JSON, `severity` aparece como nivel del log en la UI de GCP, `logger` es filtrable directamente, y es posible hacer queries como `jsonPayload.logger="src.ingestion.main"`.
+
+## Cómo se usa
+
+### Punto de entrada (`setup_logging`)
+
+Los scripts que arrancan como procesos independientes (Cloud Run Job, `ingestion/main.py`, la API FastAPI) llaman a `setup_logging()` al inicio:
+
+```python
+from src.common.logging_setup import setup_logging
+setup_logging()   # configura el root logger con JSON output
+```
+
+Esto limpia cualquier handler previo del root logger y añade un `StreamHandler` a `stdout` con el `JsonFormatter`. Todos los loggers del proceso heredan esa configuración.
+
+### Módulos internos (`logging.getLogger`)
+
+El resto de módulos no llaman a `setup_logging` — solo obtienen un logger nombrado:
+
+```python
+import logging
+logger = logging.getLogger(__name__)  # nombre = "src.training.registry"
+```
+
+El nombre `__name__` hace que cada módulo tenga su propio logger con el nombre del módulo Python, lo que permite filtrar logs por módulo en Cloud Logging sin configuración adicional.
+
+### Airflow
+
+El scheduler de Airflow configura su propio logging internamente. Las tareas que llaman a código de `src/` a través de `BashOperator` arrancan un proceso nuevo, por lo que `setup_logging()` se ejecuta de forma independiente al arrancar el módulo. Las tareas con `PythonOperator` (como `register_and_promote`) corren dentro del proceso del scheduler, donde Airflow ya ha configurado el root logger — `setup_logging()` no se llama ahí; se deja que Airflow gestione el formato.
+
+---
+
+# Pre-commit
+
+## Qué es y para qué sirve
+
+`pre-commit` es un framework que ejecuta una serie de comprobaciones automáticamente antes de cada `git commit`. Si alguna falla, el commit se bloquea y hay que corregir el problema primero. Esto evita que lleguen al repositorio archivos con errores de estilo, imports sin usar o archivos de debug.
+
+La configuración está en `.pre-commit-config.yaml` en la raíz del repositorio.
+
+## Hooks configurados
+
+### `pre-commit-hooks` — comprobaciones básicas de ficheros
+
+Hooks de utilidad general que no requieren instalar nada extra:
+
+| Hook | Qué comprueba |
+|---|---|
+| `trailing-whitespace` | Elimina espacios al final de cada línea |
+| `end-of-file-fixer` | Asegura que todos los archivos terminan con exactamente un salto de línea |
+| `check-yaml` | Valida que los archivos `.yaml`/`.yml` tienen sintaxis válida |
+| `check-toml` | Valida `pyproject.toml` y otros TOML |
+| `check-merge-conflict` | Detecta marcadores de conflicto (`<<<<<<`, `=======`) que se hayan quedado sin resolver |
+| `debug-statements` | Detecta `pdb.set_trace()`, `breakpoint()` y similares olvidados en el código |
+
+### `ruff` — linting y formateo
+
+[Ruff](https://docs.astral.sh/ruff/) es un linter y formatter de Python escrito en Rust, compatible con las reglas de flake8, isort y black pero órdenes de magnitud más rápido. Se configura en `pyproject.toml`.
+
+Se ejecutan dos hooks:
+- **`ruff`** con `--fix`: detecta y corrige automáticamente problemas de estilo — imports sin usar, variables no usadas, orden de imports, etc. Si encuentra algo que no puede corregir solo, bloquea el commit.
+- **`ruff-format`**: formatea el código con el estilo de Ruff (equivalente a black). Modifica los archivos in-place.
+
+### `mypy` — comprobación de tipos
+
+Mypy analiza los type hints del código Python y detecta errores de tipos antes de ejecutar el código. Está configurado con `--ignore-missing-imports` para no fallar en librerías sin stubs de tipos, y con stubs explícitos para las dependencias que los necesitan (`pydantic`, `pydantic-settings`, `types-requests`, `types-python-dateutil`).
+
+## Instalación y uso
+
+```bash
+# Instalar pre-commit y activar los hooks en el repo local
+make setup          # equivale a: pip install pre-commit && pre-commit install
+
+# Ejecutar todos los hooks manualmente sobre todos los archivos
+pre-commit run --all-files
+
+# Ejecutar solo un hook concreto
+pre-commit run mypy --all-files
+```
+
+Una vez instalado con `pre-commit install`, los hooks se ejecutan automáticamente en cada `git commit`. El comando `make lint` también los ejecuta manualmente sin necesidad de hacer un commit.
+
+---
+
+# Flujo de entrenamiento e inferencia
+
+## Visión general
+
+```
+Cada día a las 03:00 UTC
+    Airflow DAG bicimad_training
+        │
+        ├─ Tarea 1: Cloud Run Job (bicimad-training)
+        │       Descarga datos de BQ → entrena LightGBM → evalúa → guarda en GCS
+        │
+        └─ Tarea 2: PythonOperator en la VM de Airflow
+                Descarga modelo de GCS → registra en MLflow → promueve a @prod si mejora
+
+Cada 15 minutos
+    Airflow DAG bicimad_ingestion
+        │
+        ├─ Captura estado de estaciones + meteorología → GCS + BQ
+        └─ Batch inference: carga modelo @prod → predice → escribe en BQ predictions
+```
+
+---
+
+## Artifact Registry y la imagen de training
+
+**Artifact Registry** es el registro de imágenes Docker de GCP (equivalente a Docker Hub pero privado y dentro del mismo proyecto). En este proyecto hay un repositorio llamado `bicimad` en la región `europe-west1` que almacena la imagen de entrenamiento bajo el nombre `bicimad/training`.
+
+La imagen se construye a partir de `infra/training/Dockerfile`:
+
+```dockerfile
+FROM python:3.11-slim
+COPY pyproject.toml ./
+COPY src/ src/
+RUN pip install -e ".[training,features,ingestion]"
+ENTRYPOINT ["python", "-m", "src.training.train"]
+```
+
+El punto clave es el `ENTRYPOINT`: cuando el contenedor arranca, ejecuta directamente `src/training/train.py` como script. No hay ningún servidor escuchando — el contenedor hace su trabajo y termina. Esto es el patrón de uso de Cloud Run Jobs (frente a Cloud Run Services, que sí mantienen un servidor HTTP activo).
+
+Cada merge a `main` que toca `src/` o `pyproject.toml` dispara el workflow de CI/CD `deploy-training.yml`, que construye la imagen y la sube a Artifact Registry con dos tags: `:latest` (que es el que usa el Cloud Run Job) y `:{short-sha}` para trazabilidad.
+
+---
+
+## El pipeline de entrenamiento (Cloud Run Job)
+
+El Cloud Run Job recibe como argumento `--end-date` con la fecha de ayer (pasada desde el DAG de Airflow con `{{ macros.ds_add(ds, -1) }}`). A partir de ahí ejecuta estos pasos:
+
+### 1. Construcción del dataset (expanding window)
+
+`build_training_dataset()` en `src/features/build_dataset.py` consulta BigQuery para obtener los snapshots entre `start_date` y `end_date`. El rango se calcula en `train.py` como `end - (train_days + val_days + test_days)`, que con los valores por defecto son los **9 días anteriores** a la fecha de corte. Es una ventana deslizante de tamaño fijo — la ventana se mueve hacia adelante con cada entrenamiento pero su tamaño no crece.
+
+Se cargan `feature_warmup_days` días adicionales antes del `start_date` real para que las features de lag y rolling tengan valores válidos desde el primer día del split de training (si no se cargaran, las features `dock_bikes_same_time_1w` o `avg_dock_same_hour_7d` estarían a `null` los primeros 7 días).
+
+### 2. Split temporal
+
+`temporal_split()` en `src/training/split.py` divide el dataset en tres fragmentos **cronológicos**, nunca aleatorios:
+
+```
+──────────────────────────────────────────────────────── tiempo ──▶
+│        train (7 días por defecto)       │  val (1d) │ test (1d) │
+```
+
+El split aleatorio está prohibido en series temporales porque introduciría *data leakage*: el modelo vería el futuro durante el entrenamiento.
+
+### 3. Entrenamiento LightGBM
+
+`train_model()` en `src/training/train.py` entrena un regresor LightGBM cuyo objetivo es minimizar el MAE directamente (`objective: regression_l1`). El conjunto de validación se usa exclusivamente para *early stopping* — LightGBM para de añadir árboles cuando el error de validación deja de mejorar durante 50 rondas seguidas, lo que evita el sobreajuste sin necesidad de fijar `n_estimators` manualmente.
+
+Opcionalmente, con `--optuna`, se ejecuta `train_with_optuna()` que busca los mejores hiperparámetros (`num_leaves`, `learning_rate`, `subsample`, etc.) mediante búsqueda bayesiana con Optuna (50 trials por defecto), y luego reentrena con los mejores parámetros encontrados.
+
+### 4. Evaluación en test: dos comparaciones
+
+`evaluate()` en `src/training/evaluate.py` calcula MAE, RMSE, MAE normalizado y R² sobre el conjunto de **test** (el fragmento más reciente, no visto durante el entrenamiento ni el early stopping).
+
+Además de las métricas brutas, computa la comparación contra el **baseline naive**: la predicción más simple posible es asumir que el estado en t+1h será igual que en t (es decir, `dock_bikes(t+60 min) ≈ dock_bikes(t)`). Si el modelo no supera esa predicción trivial, no merece ser desplegado.
+
+El resultado de `evaluate()` incluye:
+
+| Métrica | Qué mide |
+|---|---|
+| `mae` | Error absoluto medio del modelo (bicicletas) |
+| `baseline_mae` | MAE del modelo naive (persistencia) |
+| `improvement_pct` | `(baseline_mae - mae) / baseline_mae × 100` |
+| `rmse`, `r2`, `mae_normalized` | Métricas adicionales de calidad |
+
+### 5. Guardado en GCS
+
+`save_model()` en `src/training/registry.py` escribe en GCS bajo `models/v{YYYYMMDD_HHMMSS}/`:
+- `model.txt` — el modelo LightGBM en formato nativo
+- `metadata.json` — métricas, nombres de features, número de árboles, top features
+- `feature_importance.json` y `feature_importance.png` — importancia por ganancia y splits
+
+El Cloud Run Job termina aquí. No toca MLflow directamente.
+
+---
+
+## Registro en MLflow y promoción a @prod
+
+Una vez que el Cloud Run Job termina correctamente, el DAG de Airflow lanza la segunda tarea: `register_and_promote` como `PythonOperator` en la VM de Airflow (que sí tiene acceso de red al servidor de MLflow).
+
+Esta tarea llama a `register_and_promote()` en `src/training/registry.py`, que:
+
+1. Descarga el modelo recién entrenado de GCS.
+2. Abre un run en MLflow, loguea parámetros, métricas y artefactos, y registra el modelo en el Model Registry creando una nueva versión numerada.
+3. Compara el MAE del nuevo modelo con el MAE del modelo actualmente en `@prod` (obtenido del mismo MLflow).
+4. Promueve el nuevo modelo al alias `@prod` solo si su MAE es menor. Si no hay ningún modelo en `@prod` todavía (primer entrenamiento), promueve siempre.
+
+Resultado: `@prod` apunta siempre al mejor modelo evaluado sobre el mismo conjunto de test de la última semana.
+
+Para los detalles de cómo funciona el Registry, los aliases y el `run_id`, ver la sección **MLflow en este proyecto** más arriba.
+
+---
+
+## Inferencia batch (cada 15 minutos)
+
+La inferencia no corre en un servicio dedicado — ocurre dentro del DAG de ingesta `bicimad_ingestion`, como una fase más del ciclo de captura de datos.
+
+Después de escribir el snapshot de estaciones en BigQuery, `ingest()` en `src/ingestion/main.py` llama a `predict_all_stations()` en `src/serving/predict.py`. Esta función:
+
+1. Carga el modelo en producción llamando a `load_prod_model()`, que resuelve el alias `@prod` en MLflow y descarga el `model.txt` de GCS. El modelo se cachea en memoria — las siguientes llamadas dentro del mismo proceso de Airflow no vuelven a descargarlo.
+2. Construye las features para cada estación activa usando el mismo código de `src/features/` que se usó en training (garantizando que no hay *training-serving skew*).
+3. Produce un vector de predicciones: `dock_bikes(t+60 min)` por estación.
+4. Escribe las predicciones en la tabla `predictions` de BigQuery, con timestamp de cuándo se hizo la predicción y cuándo se espera que sea válida (`target_timestamp = now + 60 min`).
+
+Si el modelo no está disponible (sistema recién desplegado, MLflow caído), la fase de inferencia falla de forma **no fatal**: el ciclo de ingesta continúa y escribe los datos de estaciones en BQ igualmente. El campo `predictions_written` del resumen del ciclo valdrá 0.
+
+Tras la inferencia, el ciclo lanza también la **reconciliación**: busca predicciones hechas hace ~1 hora y las compara con el estado real actual de las estaciones, calculando el error por ciclo y escribiéndolo en `cycle_metrics`.
+
+---
+
+## API de serving (consulta de predicciones)
+
+La API de serving es una aplicación **FastAPI** en `src/serving/app.py`. No genera predicciones — lee la tabla `predictions` de BigQuery y expone los resultados ya calculados por el batch.
+
+Tres endpoints GET:
+
+| Endpoint | Descripción |
+|---|---|
+| `GET /health` | Liveness check. Siempre devuelve 200 si el proceso está vivo |
+| `GET /predictions/latest` | Devuelve la predicción más reciente de **todas** las estaciones |
+| `GET /predictions/{station_id}` | Devuelve la predicción más reciente de **una** estación concreta |
+
+Para arrancar localmente:
+
+```bash
+make serve   # → http://localhost:8000
+```
+
+La API es actualmente una herramienta de consulta local/dev. No está desplegada como servicio permanente en producción.
+
+---
+
+# Ingesta
+
+## Qué hace y cuándo se ejecuta
+
+La ingesta captura el estado en tiempo real de las 634 estaciones de BiciMAD y los datos meteorológicos actuales, los persiste en GCS y BigQuery, y acto seguido lanza la inferencia batch para ese ciclo. Se ejecuta cada 15 minutos mediante el DAG `bicimad_ingestion`, que lanza un `BashOperator` que llama a `python -m src.ingestion.main`. El uso de `BashOperator` en vez de `PythonOperator` es deliberado: arranca un proceso hijo desde cero (~100 MB de RAM) en lugar de hacer `fork()` del scheduler de Airflow, que ya ocupa ~2 GB (ver la sección de Airflow para el detalle).
+
+Toda la lógica vive en `src/ingestion/main.py`, en la función `ingest()`, que ejecuta 6 fases en orden. Las fases 1–4 son fatales (si fallan, el DAG reintenta). Las fases 5 y 6 están envueltas en `try/except` y son no-fatales.
+
+---
+
+## Fase 1 — Autenticación con la API EMT
+
+La API de BiciMAD usa un sistema de tokens temporales. En cada ciclo, antes de pedir datos, hay que disponer de un token válido.
+
+Las credenciales (email y contraseña) se leen siempre de **Google Secret Manager** — nunca de variables de entorno ni archivos en disco. Esto lo hace `get_emt_credentials()` en `bicimad_client.py`, que llama a la API de Secret Manager con las credenciales de la service account.
+
+El login en sí es una petición GET a `/v2/mobilitylabs/user/login/` con email y contraseña como cabeceras HTTP. La API devuelve código `"00"` (token nuevo) o `"01"` (token existente extendido) — ambos son válidos. Cualquier otro código es un error. Si el login falla, se reintenta hasta 3 veces con backoff exponencial (2s, 4s).
+
+Para no autenticarse en cada uno de los ~96 ciclos diarios, el token se persiste en disco mediante `TokenCache`: un archivo JSON en `/tmp/.bicimad_token_cache.json` que almacena el token y el timestamp de cuando se obtuvo. El TTL configurado es de 23 horas (el token real expira a las 24h, se usa 23h como margen). En cada ciclo, `get_valid_token()` lee el cache, comprueba la edad, y solo hace login si ha expirado. La ruta del cache es configurable con `BICIMAD_TOKEN_CACHE_PATH`.
+
+## Fase 2 — Fetch de datos
+
+Con el token en mano, se hacen dos peticiones de forma secuencial:
+
+**Estaciones** (`fetch_stations`): GET a `/v2/transport/bicimad/stations/` con el token como cabecera `accessToken`. La respuesta JSON se valida con el schema Pydantic `BicimadApiResponse` definido en `src/common/schemas.py`. Si el campo `code` de la respuesta no es `"00"`, se lanza un error. Si falla la conexión o el servidor devuelve un 5xx, se reintenta hasta 3 veces con backoff exponencial.
+
+**Meteorología** (`fetch_current_weather`): GET a la API pública de Open-Meteo (sin autenticación). Si falla por cualquier motivo, se captura la excepción y se loggea como `WARNING` — el ciclo continúa con `weather = None`. El campo `weather_snapshot` en BigQuery quedará `null` en ese ciclo.
+
+## Fase 3 — Construcción del payload raw
+
+Antes de persistir, se construye un único dict JSON que combina el timestamp del ciclo, el resultado completo de la respuesta de estaciones y el snapshot meteorológico (o `null`). Este payload es la copia fiel de lo que devolvió la API, sin transformaciones.
+
+## Fase 4 — Escritura a GCS y BigQuery
+
+**GCS** (`write_raw_to_gcs`): el payload JSON se sube a GCS en la ruta particionada `raw/station_status/dt=YYYY-MM-DD/hh=HH/mm=MM/{timestamp}.json`. Esta copia raw es el *data lake* inmutable — si en el futuro hay que re-procesar los datos con una lógica diferente, el raw siempre está ahí.
+
+**BigQuery** (`load_to_bigquery`): se construye una fila por estación, añadiendo `ingestion_timestamp` y `weather_snapshot` a los campos de la estación. Las ~634 filas se insertan en la tabla `station_status_raw` mediante *streaming insert* (la API de BQ `insertAll`), que es inmediato pero no transaccional. Las filas son visibles en consultas en cuestión de segundos.
+
+## Fase 5 — Inferencia batch (no fatal)
+
+Descrita en detalle en la sección **Flujo de entrenamiento e inferencia**. En resumen: se carga el modelo `@prod` desde MLflow (cacheado en memoria entre reintentos dentro del mismo proceso), se calculan las features para las estaciones activas, y las predicciones se escriben en BQ `predictions`. Si falla — modelo no disponible, MLflow caído, error de features — se loggea el error y el ciclo continúa.
+
+## Fase 6 — Reconciliación (no fatal)
+
+`reconcile_predictions()` en `src/monitoring/reconcile.py` busca en BQ las predicciones cuyo `target_time` coincide con el timestamp del ciclo actual (es decir, predicciones hechas hace ~1h que dijeron "a las HH:MM habrá X bicis"). Las compara con los valores reales observados en este ciclo. Calcula MAE, RMSE, p50, p90 y la peor estación **en memoria** (sin guardar los errores por estación) y escribe una única fila agregada en `cycle_metrics`. Si no hay predicciones para ese `target_time` (primeras horas tras el despliegue), devuelve `None` silenciosamente.
+
+---
+
+# Monitorización
+
+## Qué monitoriza el sistema y cuándo
+
+Hay dos capas de monitorización con frecuencias distintas:
+
+- **En tiempo real, cada 15 minutos**: reconciliación de predicciones (fase 6 del DAG de ingesta, descrita arriba). Genera una fila en `cycle_metrics` por ciclo.
+- **Una vez al día, a las 06:05 UTC**: el DAG `bicimad_daily_monitoring` ejecuta tres módulos en secuencia: métricas diarias agregadas, drift report, y alertas.
+
+El DAG diario se lanza a las 06:05 (no a las 06:00) para dar margen a que el entrenamiento nocturno de las 03:00 haya terminado antes de que las alertas comparen contra el modelo `@prod`.
+
+---
+
+## Métricas diarias (`daily_metrics.py`)
+
+Agrega los errores de predicción de ayer consultando BigQuery directamente, sin cargar datos en memoria:
+
+```sql
+SELECT p.station_id, AVG(ABS(p.predicted_dock_bikes - s.dock_bikes)) AS daily_mae, ...
+FROM predictions p
+JOIN station_status_raw s ON p.station_id = s.id AND p.target_time = s.ingestion_timestamp
+WHERE DATE(p.target_time) = @target_date
+GROUP BY p.station_id
+```
+
+Este JOIN entre `predictions` y `station_status_raw` es la reconciliación a nivel diario: para cada predicción, busca el snapshot real en el momento en que la predicción decía que sería válida (`target_time`). Produce dos tipos de resultados:
+
+- **Por estación** → tabla `station_daily_metrics` (una fila por estación por día). Permite detectar estaciones problemáticas de forma consistente.
+- **Global** → tabla `daily_totals` (una fila por día). Es el KPI principal del sistema: el MAE diario agregado de todas las estaciones.
+
+---
+
+## Drift report (`drift_report.py`)
+
+Detecta si la distribución de las features en los datos recientes se ha desviado respecto a los datos con que se entrenó el modelo. Un drift sostenido indica que el modelo podría estar haciendo predicciones sobre una distribución que nunca vio durante el entrenamiento.
+
+Usa la librería **Evidently** con el preset `DataDriftPreset`, que aplica tests estadísticos (Kolmogorov-Smirnov para variables continuas, chi-cuadrado para categóricas) a cada feature y determina si la distribución actual difiere significativamente de la referencia.
+
+Las dos ventanas de datos:
+
+- **Ventana actual**: los datos de ayer. Se cargan snapshots de BQ con `feature_warmup_days` días previos para que las features de lag/rolling tengan valores válidos, y luego se filtran al día objetivo.
+- **Ventana de referencia**: el training window del último modelo entrenado. Se obtiene leyendo `metadata.json` del modelo en GCS (`load_latest_metadata()`), que contiene el campo `saved_at`. La referencia va desde `saved_at - train_days` hasta `saved_at`.
+
+Para que el cálculo sea manejable en la VM de Airflow (e2-medium, 4 GB), la ventana de referencia se muestrea a 100 estaciones aleatorias antes de construir las features — 100 estaciones × 7 días × 96 snapshots ≈ 67K filas, suficiente para la detección estadística de drift.
+
+El resultado se sube a GCS en dos formatos:
+- `monitoring/drift/YYYY-MM-DD.html` — informe completo de Evidently, visualizable en el navegador.
+- `monitoring/drift/YYYY-MM-DD_summary.json` — resumen ligero con `n_drifted_features`, `share_drifted`, y `drifted_feature_names`. Es el que leen las alertas sin necesidad de parsear el HTML.
+
+---
+
+## Alertas (`alerts.py`)
+
+Dos checks independientes que se ejecutan después del drift report:
+
+### Alerta de rendimiento
+
+Compara el **MAE online de las últimas 24 horas** (promedio de `cycle_metrics` en BQ) contra el **MAE de training del modelo en `@prod`** (obtenido de MLflow via `get_prod_model_metrics()`):
+
+```
+si  MAE_online > MAE_training × 1.20  →  PERFORMANCE ALERT
+```
+
+El umbral del 20% de degradación tolera variaciones normales por cambios estacionales o días atípicos. Si se supera, puede indicar que el modelo ha envejecido y necesita reentrenamiento urgente, o que hay un problema en el pipeline de features.
+
+### Alerta de drift
+
+Lee el JSON summary generado por `drift_report.py` en GCS y comprueba `share_drifted`:
+
+```
+si  share_drifted > 0.30  →  DRIFT ALERT
+```
+
+Si más del 30% de las features han cambiado su distribución, hay riesgo de degradación futura aunque el MAE online todavía sea aceptable.
+
+### Qué hacen las alertas cuando se disparan
+
+Loggean un mensaje `WARNING` con `PERFORMANCE ALERT` o `DRIFT ALERT` en el texto. Esos mensajes aparecen en los logs del DAG de Airflow y, si el SMTP está configurado en `airflow.env`, se envía un email al operador (Airflow tiene soporte nativo de alertas por email en `default_args`). **No hay integración con sistemas externos** como PagerDuty o Slack en la implementación actual.

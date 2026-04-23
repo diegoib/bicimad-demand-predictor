@@ -64,8 +64,13 @@ GCP:
 
 ### 2.1 Requisitos previos
 
-- Cuenta GCP con permisos de Owner o Editor en el proyecto
-- `gcloud` CLI instalado y autenticado (`gcloud auth login`)
+- Cuenta GCP con permisos de Owner o Editor en el proyecto y **billing habilitado** en el proyecto (sin billing no se pueden crear VMs ni usar ciertas APIs)
+- `gcloud` CLI instalado y autenticado:
+  ```bash
+  gcloud auth login                        # autenticación interactiva
+  gcloud auth application-default login    # necesario para que Terraform use ADC
+  gcloud config set project YOUR_PROJECT_ID
+  ```
 - `terraform` >= 1.5
 - `docker` instalado localmente (para build de la imagen de training)
 
@@ -106,9 +111,15 @@ terraform output -raw service_account_key_base64 | base64 -d > gcp-key.json
 chmod 600 gcp-key.json
 ```
 
+> **Importante:** verifica que `infra/gcp-key.json` está en `.gitignore` antes de hacer cualquier commit. Este archivo contiene una clave privada y nunca debe subirse al repositorio.
+
 ### 2.5 Artifact Registry para la imagen de training
 
 ```bash
+# Habilitar las APIs necesarias (si no lo hizo Terraform)
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+  --project=YOUR_PROJECT_ID
+
 # Crear repositorio (una sola vez)
 gcloud artifacts repositories create bicimad \
   --repository-format=docker \
@@ -116,8 +127,9 @@ gcloud artifacts repositories create bicimad \
   --project=YOUR_PROJECT_ID
 
 # Build y push inicial de la imagen de training
+# --platform linux/amd64 es obligatorio si compilas desde Mac con chip Apple Silicon
 gcloud auth configure-docker europe-west1-docker.pkg.dev
-docker build -f infra/training/Dockerfile \
+docker build --platform linux/amd64 -f infra/training/Dockerfile \
   -t europe-west1-docker.pkg.dev/YOUR_PROJECT_ID/bicimad/training:latest .
 docker push europe-west1-docker.pkg.dev/YOUR_PROJECT_ID/bicimad/training:latest
 ```
@@ -133,6 +145,7 @@ gcloud run jobs create bicimad-training \
   --memory=4Gi \
   --cpu=2 \
   --max-retries=1 \
+  --task-timeout=30m \
   --project=YOUR_PROJECT_ID
 ```
 
@@ -156,10 +169,23 @@ chmod 600 ~/bicimad/infra/gcp-key.json
 cp infra/airflow.env.example infra/airflow.env
 # Editar: BICIMAD_GCS_BUCKET, BICIMAD_GCP_PROJECT,
 #         AIRFLOW__CORE__FERNET_KEY, AIRFLOW__WEBSERVER__SECRET_KEY
+#
+# Para generar los valores de las claves:
+#   AIRFLOW__CORE__FERNET_KEY:
+#     python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   AIRFLOW__WEBSERVER__SECRET_KEY:
+#     openssl rand -hex 32
 nano infra/airflow.env
 
-# 4. Inicializar y arrancar Airflow
+# 4. Instalar make si la VM no lo tiene (imágenes Debian mínimas no lo incluyen)
+sudo apt-get install -y make
+
+# 5. Inicializar y arrancar Airflow
 make airflow-up
+
+# 6. Verificar que los contenedores están healthy
+docker compose -f infra/docker-compose.yml ps
+# → postgres, airflow-webserver y airflow-scheduler deben aparecer con estado "healthy"
 
 # 5. Configurar Variables de Airflow (una sola vez)
 make airflow-vars GCP_PROJECT=YOUR_PROJECT_ID GCP_REGION=europe-west1
@@ -226,14 +252,24 @@ Acceder al UI (`http://VM_IP:8080`, admin/admin) y activar:
 - `bicimad_training`
 - `bicimad_daily_monitoring`
 
+> **Seguridad:** cambia la contraseña de `admin` en cuanto entres por primera vez: **Admin → Security → List Users**.
+
 ---
 
 ## 3. Verificación end-to-end
 
 ### 3.1 Verificar ingesta (primer ciclo, ~15 min tras activar el DAG)
 
+Antes de activar el DAG, puedes probar la ingesta manualmente desde la VM de Airflow:
+
 ```bash
-# Ver últimos logs del DAG de ingesta
+gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
+  "cd ~/bicimad && PYTHONPATH=. python -m src.ingestion.main"
+# → debe mostrar el nº de estaciones descargadas y confirmación de escritura en GCS/BQ
+```
+
+```bash
+# Ver últimos logs del DAG de ingesta (tras activarlo)
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
   "docker compose -f ~/bicimad/infra/docker-compose.yml logs --tail=50 airflow-scheduler"
 
@@ -400,6 +436,7 @@ El bucket GCS tiene una lifecycle rule de **365 días**: los objetos más antigu
    - **Token EMT expirado**: el código renueva automáticamente usando Secret Manager. Si persiste el error 401, borrar el cache del token (`rm /tmp/.bicimad_token_cache.json` en la VM de Airflow dentro del contenedor) para forzar reautenticación inmediata. Si Secret Manager no responde, revisar permisos del service account.
    - **BQ streaming insert timeout**: transitorio, el DAG reintenta 3 veces con backoff
    - **Open-Meteo no disponible**: la ingesta continúa sin datos meteorológicos; el campo `weather_snapshot` quedará `null` en esos registros. Es comportamiento esperado, no indica un bug.
+   - **Errores de permisos en GCS/BQ**: comprobar que `GOOGLE_APPLICATION_CREDENTIALS` en `infra/airflow.env` apunta a `/opt/airflow/keys/gcp-key.json` y que el fichero está montado en el contenedor: `docker compose -f ~/bicimad/infra/docker-compose.yml exec airflow-webserver ls /opt/airflow/keys/`
 
 ### DAG de training falla (Cloud Run Job)
 

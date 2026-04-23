@@ -1,7 +1,7 @@
 .PHONY: setup features train serve test lint \
         airflow-up airflow-down \
         mlflow-up mlflow-down \
-        run-training-job
+        deploy-training run-training-job
 
 PYTHON := python
 SRC_DIR := src
@@ -54,6 +54,13 @@ mlflow-down:
 # ---------------------------------------------------------------------------
 # GCP deployment
 # ---------------------------------------------------------------------------
+
+## Build and push the training Docker image to Artifact Registry.
+## Usage: make deploy-training GCP_PROJECT=my-project GCP_REGION=europe-west1
+deploy-training:
+	docker build -t "$(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bicimad/training:latest" \
+		-f infra/training/Dockerfile .
+	docker push "$(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bicimad/training:latest"
 
 ## Trigger the Cloud Run training job manually.
 ## Usage: make run-training-job GCP_PROJECT=my-project GCP_REGION=europe-west1
