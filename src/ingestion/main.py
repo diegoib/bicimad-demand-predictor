@@ -194,28 +194,6 @@ def ingest() -> dict[str, Any]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Entry points
-# ---------------------------------------------------------------------------
-
-
-def handler(request: object) -> tuple[str, int]:
-    """Cloud Function HTTP entry point.
-
-    Args:
-        request: The Flask/functions-framework Request object (unused).
-
-    Returns:
-        Tuple of (JSON body, HTTP status code).
-    """
-    try:
-        result = ingest()
-        return json.dumps(result), 200
-    except Exception as exc:
-        logger.exception("Ingestion failed: %s", exc)
-        return json.dumps({"status": "error", "error": str(exc)}), 500
-
-
 if __name__ == "__main__":
     import sys
 

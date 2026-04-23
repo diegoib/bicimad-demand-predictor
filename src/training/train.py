@@ -298,7 +298,7 @@ if __name__ == "__main__":
     )
 
     output_dir = Path(args.output_dir) if args.output_dir else None
-    version_dir = save_model(model, metrics, output_dir=output_dir)
+    version_dir = save_model(model, metrics, output_dir=output_dir, test_df=test_df)
     print(f"Model saved to {version_dir}")
 
     importance = compute_feature_importance(model)

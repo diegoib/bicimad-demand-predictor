@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import lightgbm as lgb
+import polars as pl
 
 from src.common.config import settings as _settings
 from src.features.feature_definitions import FEATURE_NAMES
@@ -35,6 +36,7 @@ def save_model(
     model: lgb.Booster,
     metrics: dict[str, Any],
     output_dir: str | Path | None = None,
+    test_df: pl.DataFrame | None = None,
 ) -> Path:
     """Save a trained LightGBM model and its metadata to disk and GCS.
 
@@ -99,6 +101,11 @@ def save_model(
     with metadata_path.open("w") as f:
         json.dump(metadata, f, indent=2)
     logger.info("Metadata saved to %s", metadata_path)
+
+    if test_df is not None:
+        test_set_path = version_dir / "test_set.parquet"
+        test_df.write_parquet(str(test_set_path))
+        logger.info("Test set saved to %s", test_set_path)
 
     _upload_to_gcs(version_dir, version)
 
@@ -246,6 +253,32 @@ def _download_version_from_gcs(version: str, dest_dir: Path) -> None:
         local_path = dest_dir / filename
         blob.download_to_filename(str(local_path))
         logger.info("Downloaded %s from GCS", local_path)
+
+
+def _download_test_set_from_gcs(version: str, dest_path: Path) -> bool:
+    """Download test_set.parquet for a model version from GCS.
+
+    Args:
+        version: Version string (e.g. ``v20260419_030000``).
+        dest_path: Local file path to write the parquet file to.
+
+    Returns:
+        True if downloaded, False if the file does not exist in GCS
+        (models trained before this feature was added).
+    """
+    try:
+        import google.cloud.storage as storage
+    except ImportError as e:
+        raise ImportError("Install google-cloud-storage.") from e
+
+    client = storage.Client(project=_settings.gcp_project)
+    bucket = client.bucket(_settings.gcs_bucket)
+    blob = bucket.blob(f"models/{version}/test_set.parquet")
+    if not blob.exists():
+        return False
+    blob.download_to_filename(str(dest_path))
+    logger.info("Downloaded test_set.parquet for %s from GCS", version)
+    return True
 
 
 def register_model_to_mlflow(version: str | None = None) -> tuple[str, float]:
@@ -397,12 +430,22 @@ def register_and_promote(version: str | None = None) -> None:
 
     Promotion rules:
     - No existing ``@prod`` alias → always promote (bootstrap).
-    - Existing ``@prod`` → promote only if new MAE < current prod MAE.
+    - Existing ``@prod`` → re-evaluate prod on the same test set as the new model,
+      then promote only if new MAE < prod MAE on that shared test set.
+      Falls back to stored prod MAE if ``test_set.parquet`` is absent in GCS
+      (models trained before this feature was added).
 
     Args:
         version: GCS version string (e.g. ``v20260419_030000``).
             Defaults to the latest version in GCS.
     """
+    import tempfile
+
+    from src.training.evaluate import evaluate  # local import to avoid circular
+
+    if version is None:
+        version = _get_latest_gcs_version()
+
     run_id, new_mae = register_model_to_mlflow(version)
 
     prod = get_prod_model_metrics()
@@ -414,11 +457,35 @@ def register_and_promote(version: str | None = None) -> None:
             new_mae,
         )
         promote_to_prod(run_id)
-    elif new_mae < prod["mae"]:
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        parquet_path = Path(tmpdir) / "test_set.parquet"
+        has_test_set = _download_test_set_from_gcs(version, parquet_path)
+        if has_test_set:
+            test_df = pl.read_parquet(str(parquet_path))
+            prod_booster, _ = load_prod_model()
+            prod_metrics = evaluate(prod_booster, test_df)
+            compare_mae = prod_metrics["mae"]
+            logger.info(
+                "Fair comparison on same test set: new MAE=%.4f, prod MAE=%.4f (prod stored MAE=%.4f)",
+                new_mae,
+                compare_mae,
+                prod["mae"],
+            )
+        else:
+            logger.warning(
+                "test_set.parquet not found for version %s — falling back to stored prod MAE "
+                "(comparison across different test sets, may be biased)",
+                version,
+            )
+            compare_mae = prod["mae"]
+
+    if new_mae < compare_mae:
         logger.info(
             "New model improves: MAE %.4f < prod MAE %.4f — promoting run %s",
             new_mae,
-            prod["mae"],
+            compare_mae,
             run_id,
         )
         promote_to_prod(run_id)
@@ -426,7 +493,7 @@ def register_and_promote(version: str | None = None) -> None:
         logger.info(
             "New model does not improve: MAE %.4f >= prod MAE %.4f — keeping current @%s",
             new_mae,
-            prod["mae"],
+            compare_mae,
             _settings.mlflow_prod_alias,
         )
 

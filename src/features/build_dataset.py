@@ -211,30 +211,6 @@ def build_training_dataset(
     return featured_df
 
 
-def build_serving_dataset() -> pl.DataFrame:
-    """Build a fully featured DataFrame for batch inference.
-
-    Same pipeline as build_training_dataset but does NOT drop rows with a null
-    target — the most recent rows per station always have a null target because
-    no future data exists yet, and those are exactly the rows we predict on.
-
-    Returns:
-        Polars DataFrame with all feature columns. target_dock_bikes_1h is null
-        for the latest snapshot rows (the rows used for inference).
-    """
-    raw_df = _load_bigquery_snapshots(None, None)
-
-    raw_df = raw_df.filter(pl.col("activate") == 1)
-
-    logger.info(
-        "Raw data for serving: %d rows, %d stations",
-        len(raw_df),
-        raw_df["station_id"].n_unique(),
-    )
-
-    return build_all_features(raw_df)
-
-
 if __name__ == "__main__":
     import argparse
 

@@ -8,6 +8,8 @@ Guía operacional para despliegue, mantenimiento y recuperación de fallos.
 
 1. [Arquitectura de despliegue](#1-arquitectura-de-despliegue)
 2. [Primer despliegue en GCP](#2-primer-despliegue-en-gcp)
+   - 2.8 [Levantar MLflow](#28-levantar-mlflow-en-la-vm-bicimad-mlflow)
+   - 2.9 [GitHub Actions secrets](#29-configurar-github-actions)
 3. [Verificación end-to-end](#3-verificación-end-to-end)
 4. [Operaciones habituales](#4-operaciones-habituales)
 5. [Recuperación de fallos](#5-recuperación-de-fallos)
@@ -32,16 +34,22 @@ VM e2-medium (bicimad-airflow)
          ├─ airflow-scheduler
          └─ postgres (metadata DB)
 
+VM e2-medium (bicimad-mlflow)
+    └─ Docker Compose (docker-compose.mlflow.yml)
+         ├─ mlflow-server  :5000
+         └─ postgres (MLflow metadata DB)
+
 DAGs (en ~/bicimad/dags/):
     ├─ bicimad_ingestion       */15 * * * *   → BQ station_status_raw + predictions
-    ├─ bicimad_training        0 3 * * 0      → Cloud Run Job → modelo en GCS
+    ├─ bicimad_training        0 3 * * 0      → Cloud Run Job → modelo en GCS + MLflow
     └─ bicimad_daily_monitoring 5 6 * * *     → station_daily_metrics + drift report
 
 GCP:
     ├─ Cloud Storage: bicimad-data-{project}
     │    ├─ raw/station_status/dt=.../hh=.../mm=....json
     │    ├─ models/v{YYYYMMDD_HHMMSS}/model.txt + metadata.json
-    │    └─ monitoring/drift/YYYY-MM-DD.html + _summary.json
+    │    ├─ monitoring/drift/YYYY-MM-DD.html + _summary.json
+    │    └─ mlflow-artifacts/   (artefactos y experimentos del model registry)
     └─ BigQuery: dataset bicimad
          ├─ station_status_raw   (partición ingestion_timestamp)
          ├─ predictions          (partición prediction_made_at)
@@ -157,7 +165,48 @@ make airflow-up
 make airflow-vars GCP_PROJECT=YOUR_PROJECT_ID GCP_REGION=europe-west1
 ```
 
-### 2.8 Configurar GitHub Actions
+### 2.8 Levantar MLflow en la VM bicimad-mlflow
+
+```bash
+# SSH a la VM de MLflow
+gcloud compute ssh bicimad-mlflow --zone=europe-west1-b
+
+# 1. Clonar el repo
+git clone https://github.com/YOUR_ORG/bicimad.git ~/bicimad
+cd ~/bicimad
+
+# 2. Copiar la clave del service account (misma que la de Airflow)
+# (desde tu máquina local en otra terminal)
+gcloud compute scp gcp-key.json bicimad-mlflow:~/bicimad/infra/gcp-key.json \
+  --zone=europe-west1-b
+chmod 600 ~/bicimad/infra/gcp-key.json
+
+# 3. Crear mlflow.env y rellenar el bucket
+cp infra/mlflow.env.example infra/mlflow.env
+# Editar: BICIMAD_GCS_BUCKET=bicimad-data-YOUR_PROJECT_ID
+nano infra/mlflow.env
+
+# 4. Arrancar MLflow
+make mlflow-up
+```
+
+La UI está disponible en `http://MLFLOW_VM_IP:5000`.
+
+Obtener la IP interna de la VM de MLflow y configurarla en `infra/airflow.env` de la VM de Airflow:
+
+```bash
+# Obtener IP interna
+gcloud compute instances describe bicimad-mlflow \
+  --zone=europe-west1-b \
+  --format='get(networkInterfaces[0].networkIP)'
+
+# En infra/airflow.env (VM de Airflow), añadir/actualizar:
+# BICIMAD_MLFLOW_TRACKING_URI=http://MLFLOW_VM_INTERNAL_IP:5000
+```
+
+Tras editar `airflow.env`, reiniciar Airflow: `make airflow-down && make airflow-up`.
+
+### 2.9 Configurar GitHub Actions
 
 En la configuración del repositorio GitHub → Settings → Secrets and Variables → Actions, añadir:
 
@@ -165,14 +214,12 @@ En la configuración del repositorio GitHub → Settings → Secrets and Variabl
 |--------|-------|
 | `GCP_PROJECT_ID` | ID del proyecto GCP |
 | `GCP_REGION` | `europe-west1` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` |
-| `GCP_SERVICE_ACCOUNT` | `bicimad-ingestion@YOUR_PROJECT_ID.iam.gserviceaccount.com` |
+| `GCP_SA_KEY` | Contenido JSON de la service account key (descargada en §2.4) |
 | `AIRFLOW_VM_IP` | IP externa de la VM (de `terraform output airflow_vm_ip`) |
 | `AIRFLOW_VM_SSH_KEY` | Clave privada SSH para conectar a la VM |
+| `AIRFLOW_VM_USER` | Usuario SSH de la VM (`debian` en imágenes Debian de GCP) |
 
-Para Workload Identity Federation, seguir: https://github.com/google-github-actions/auth
-
-### 2.9 Habilitar DAGs en Airflow
+### 2.10 Habilitar DAGs en Airflow
 
 Acceder al UI (`http://VM_IP:8080`, admin/admin) y activar:
 - `bicimad_ingestion`
@@ -240,6 +287,10 @@ gsutil cat "gs://bicimad-data-YOUR_PROJECT_ID/models/$(gsutil ls gs://bicimad-da
   | python -m json.tool | grep '"mae"'
 ```
 
+El entrenamiento también registra el experimento en MLflow y promueve el modelo al alias `@prod` en el model registry. Verificar en la UI de MLflow (`http://MLFLOW_VM_IP:5000`) → **Models** → `bicimad-forecast`.
+
+> **Nota — feature warmup:** El primer entrenamiento tras un despliegue nuevo requiere al menos 7 días de datos en BigQuery para que las features de lag y rolling estén completas. Lanzar training antes producirá un modelo con métricas degradadas. Este período se controla con `BICIMAD_FEATURE_WARMUP_DAYS` en `airflow.env` (por defecto: 7).
+
 ### 3.6 Verificar monitorización diaria
 
 ```bash
@@ -306,6 +357,23 @@ gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
   "cd ~/bicimad && make airflow-down && make airflow-up"
 ```
 
+### Consultar la API de predicciones (Serving)
+
+La API de serving es una aplicación FastAPI que lee la tabla `predictions` de BigQuery:
+
+```bash
+# Arrancar localmente (requiere Application Default Credentials o gcp-key.json)
+make serve
+# → http://localhost:8000
+
+# Endpoints:
+# GET /health
+# GET /predictions/latest          → última predicción de todas las estaciones
+# GET /predictions/{station_id}    → predicciones de una estación concreta
+```
+
+> La API es actualmente una herramienta de consulta local/dev. No está desplegada como servicio permanente en producción.
+
 ### Ver dashboard de monitorización
 
 ```bash
@@ -317,6 +385,10 @@ gsutil signurl -d 1h gcp-key.json \
   "gs://bicimad-data-YOUR_PROJECT_ID/monitoring/dashboard/index.html"
 ```
 
+### Retención de datos
+
+El bucket GCS tiene una lifecycle rule de **365 días**: los objetos más antiguos se eliminan automáticamente. Esto limita el expanding window de training a un máximo de ~1 año de histórico. Si se necesitan datos más allá de ese período, exportarlos a BigQuery antes de que expiren o ajustar la regla en Terraform (`lifecycle_rules` en `infra/terraform/main.tf`).
+
 ---
 
 ## 5. Recuperación de fallos
@@ -325,9 +397,9 @@ gsutil signurl -d 1h gcp-key.json \
 
 1. Ver logs en Airflow UI → tarea fallida → Log
 2. Causas comunes:
-   - **Token EMT expirado**: el código renueva automáticamente, pero si Secret Manager no responde → revisar permisos del service account
+   - **Token EMT expirado**: el código renueva automáticamente usando Secret Manager. Si persiste el error 401, borrar el cache del token (`rm /tmp/.bicimad_token_cache.json` en la VM de Airflow dentro del contenedor) para forzar reautenticación inmediata. Si Secret Manager no responde, revisar permisos del service account.
    - **BQ streaming insert timeout**: transitorio, el DAG reintenta 3 veces con backoff
-   - **Open-Meteo no disponible**: el código maneja este error de forma no fatal; la ingesta continúa sin weather
+   - **Open-Meteo no disponible**: la ingesta continúa sin datos meteorológicos; el campo `weather_snapshot` quedará `null` en esos registros. Es comportamiento esperado, no indica un bug.
 
 ### DAG de training falla (Cloud Run Job)
 
@@ -360,6 +432,37 @@ gcloud compute instances reset bicimad-airflow \
 # Verificar estado
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
   "docker compose -f ~/bicimad/infra/docker-compose.yml ps"
+```
+
+### MLflow no responde o el modelo no tiene alias @prod
+
+```bash
+# Verificar estado del servidor MLflow
+gcloud compute ssh bicimad-mlflow --zone=europe-west1-b -- \
+  "docker compose -f ~/bicimad/infra/docker-compose.mlflow.yml ps"
+
+# Ver logs
+gcloud compute ssh bicimad-mlflow --zone=europe-west1-b -- \
+  "docker compose -f ~/bicimad/infra/docker-compose.mlflow.yml logs --tail=50 mlflow"
+```
+
+Si el Cloud Run Job de training termina sin error pero el alias `@prod` no aparece en el model registry:
+- Revisar logs del job buscando `MLflowException` o errores de conexión
+- Verificar que `BICIMAD_MLFLOW_TRACKING_URI` en `infra/airflow.env` apunta a la IP interna correcta de la VM de MLflow
+
+Para promover manualmente una versión al alias `@prod` desde la UI:
+1. Abrir `http://MLFLOW_VM_IP:5000` → **Models** → `bicimad-forecast`
+2. Seleccionar la versión deseada → **Aliases** → añadir `prod`
+
+O desde la VM de Airflow vía Python:
+
+```bash
+gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
+  "cd ~/bicimad && PYTHONPATH=. python - <<'EOF'
+import mlflow, os
+client = mlflow.MlflowClient(os.environ['BICIMAD_MLFLOW_TRACKING_URI'])
+client.set_registered_model_alias('bicimad-forecast', 'prod', 'VERSION_NUMBER')
+EOF"
 ```
 
 ### Tablas BQ con datos incorrectos (rollback)

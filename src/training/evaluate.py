@@ -24,13 +24,6 @@ from src.training.train import _prepare_features
 
 logger = logging.getLogger(__name__)
 
-# Boolean feature names that were cast to Int8 during training
-_BOOL_FEATURES = {
-    f.name
-    for f in __import__("src.features.feature_definitions", fromlist=["ALL_FEATURES"]).ALL_FEATURES
-    if str(f.dtype) == "bool"
-}
-
 
 def evaluate(model: lgb.Booster, df: pl.DataFrame) -> dict[str, float]:
     """Evaluate a trained LightGBM model on a DataFrame.

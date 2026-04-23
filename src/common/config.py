@@ -21,7 +21,6 @@ class Settings(BaseSettings):
 
     # GCP
     gcp_project: str = ""
-    gcp_region: str = "europe-west1"
     gcs_bucket: str = "bicimad-data"
     bq_dataset: str = "bicimad"
 

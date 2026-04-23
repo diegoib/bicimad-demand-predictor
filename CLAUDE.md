@@ -1,6 +1,6 @@
 # CLAUDE.md — Instrucciones para Claude Code
 
-Este repositorio contiene un sistema batch de ML para predecir la disponibilidad de bicicletas en las estaciones de BiciMAD (Madrid). Lee `docs/design_doc.docx` para el contexto completo del proyecto y `PLAN.md` para las tareas de implementación.
+Este repositorio contiene un sistema batch de ML para predecir la disponibilidad de bicicletas en las estaciones de BiciMAD (Madrid). Lee `PLAN.md` para las tareas de implementación.
 
 ## Stack y versiones
 
@@ -125,6 +125,5 @@ make airflow-down   # Parar Airflow
 ## Cuando no sepas qué hacer
 
 1. Consulta `PLAN.md` para ver la siguiente tarea pendiente.
-2. Consulta `docs/design_doc.docx` para decisiones de diseño.
-3. Consulta `src/common/schemas.py` para contratos de datos.
-4. Si hay ambigüedad, pregunta antes de implementar.
+2. Consulta `src/common/schemas.py` para contratos de datos.
+3. Si hay ambigüedad, pregunta antes de implementar.
