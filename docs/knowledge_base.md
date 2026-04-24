@@ -123,6 +123,8 @@ terraform destroy -var="project_id=TU_PROJECT"
 
 Elimina todos los recursos creados. Pide confirmación antes de ejecutar. El bucket tiene `force_destroy = false`, por lo que fallará si contiene datos — hay que vaciarlo primero.
 
+[↑ Volver al índice](#índice)
+
 ---
 
 # 2. Apache Airflow en este proyecto
@@ -388,6 +390,8 @@ El archivo `infra/airflow.env` (nunca commiteado) configura todos los servicios 
 | `BICIMAD_GCP_PROJECT` | Project ID de GCP para las queries de BigQuery |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Ruta a la clave JSON de la service account dentro del contenedor. Las librerías de Google Cloud la detectan automáticamente |
 
+[↑ Volver al índice](#índice)
+
 ---
 
 # 3. MLflow en este proyecto
@@ -535,6 +539,8 @@ Todas configurables en `infra/airflow.env` con el prefijo `BICIMAD_`:
 | **Alias** | Etiqueta mutable que apunta a una versión concreta | `@prod` → versión 7 |
 | **Artifact Store** | Dónde se guardan los archivos (modelo, plots…) | GCS `mlflow-artifacts/` |
 
+[↑ Volver al índice](#índice)
+
 ---
 
 # 4. Logging
@@ -578,6 +584,8 @@ El nombre `__name__` hace que cada módulo tenga su propio logger con el nombre 
 ### Airflow
 
 El scheduler de Airflow configura su propio logging internamente. Las tareas que llaman a código de `src/` a través de `BashOperator` arrancan un proceso nuevo, por lo que `setup_logging()` se ejecuta de forma independiente al arrancar el módulo. Las tareas con `PythonOperator` (como `register_and_promote`) corren dentro del proceso del scheduler, donde Airflow ya ha configurado el root logger — `setup_logging()` no se llama ahí; se deja que Airflow gestione el formato.
+
+[↑ Volver al índice](#índice)
 
 ---
 
@@ -630,6 +638,8 @@ pre-commit run mypy --all-files
 ```
 
 Una vez instalado con `pre-commit install`, los hooks se ejecutan automáticamente en cada `git commit`. El comando `make lint` también los ejecuta manualmente sin necesidad de hacer un commit.
+
+[↑ Volver al índice](#índice)
 
 ---
 
@@ -783,6 +793,8 @@ make serve   # → http://localhost:8000
 
 La API es actualmente una herramienta de consulta local/dev. No está desplegada como servicio permanente en producción.
 
+[↑ Volver al índice](#índice)
+
 ---
 
 # 7. Ingesta
@@ -830,6 +842,8 @@ Descrita en detalle en la sección **Flujo de entrenamiento e inferencia**. En r
 ## Fase 6 — Reconciliación (no fatal)
 
 `reconcile_predictions()` en `src/monitoring/reconcile.py` busca en BQ las predicciones cuyo `target_time` coincide con el timestamp del ciclo actual (es decir, predicciones hechas hace ~1h que dijeron "a las HH:MM habrá X bicis"). Las compara con los valores reales observados en este ciclo. Calcula MAE, RMSE, p50, p90 y la peor estación **en memoria** (sin guardar los errores por estación) y escribe una única fila agregada en `cycle_metrics`. Si no hay predicciones para ese `target_time` (primeras horas tras el despliegue), devuelve `None` silenciosamente.
+
+[↑ Volver al índice](#índice)
 
 ---
 
@@ -911,3 +925,5 @@ Si más del 30% de las features han cambiado su distribución, hay riesgo de deg
 ### Qué hacen las alertas cuando se disparan
 
 Loggean un mensaje `WARNING` con `PERFORMANCE ALERT` o `DRIFT ALERT` en el texto. Esos mensajes aparecen en los logs del DAG de Airflow y, si el SMTP está configurado en `airflow.env`, se envía un email al operador (Airflow tiene soporte nativo de alertas por email en `default_args`). **No hay integración con sistemas externos** como PagerDuty o Slack en la implementación actual.
+
+[↑ Volver al índice](#índice)
