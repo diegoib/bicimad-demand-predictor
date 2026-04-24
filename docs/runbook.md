@@ -39,7 +39,7 @@ VM e2-medium (bicimad-mlflow)
          ├─ mlflow-server  :5000
          └─ postgres (MLflow metadata DB)
 
-DAGs (en ~/bicimad/dags/):
+DAGs (en ~/bicimad-demand-predictor/dags/):
     ├─ bicimad_ingestion       */15 * * * *   → BQ station_status_raw + predictions
     ├─ bicimad_training        0 3 * * 0      → Cloud Run Job → modelo en GCS + MLflow
     └─ bicimad_daily_monitoring 5 6 * * *     → station_daily_metrics + drift report
@@ -156,14 +156,14 @@ gcloud run jobs create bicimad-training \
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b
 
 # 1. Clonar el repo
-git clone https://github.com/YOUR_ORG/bicimad.git ~/bicimad
-cd ~/bicimad
+git clone https://github.com/YOUR_ORG/bicimad-demand-predictor.git ~/bicimad-demand-predictor
+cd ~/bicimad-demand-predictor
 
 # 2. Copiar la clave del service account (descargada en §2.4)
 # (desde tu máquina local en otra terminal)
-gcloud compute scp gcp-key.json bicimad-airflow:~/bicimad/infra/gcp-key.json \
+gcloud compute scp gcp-key.json bicimad-airflow:~/bicimad-demand-predictor/infra/gcp-key.json \
   --zone=europe-west1-b
-chmod 600 ~/bicimad/infra/gcp-key.json
+chmod 600 ~/bicimad-demand-predictor/infra/gcp-key.json
 
 # 3. Crear airflow.env y rellenar los valores requeridos
 cp infra/airflow.env.example infra/airflow.env
@@ -198,14 +198,14 @@ make airflow-vars GCP_PROJECT=YOUR_PROJECT_ID GCP_REGION=europe-west1
 gcloud compute ssh bicimad-mlflow --zone=europe-west1-b
 
 # 1. Clonar el repo
-git clone https://github.com/YOUR_ORG/bicimad.git ~/bicimad
-cd ~/bicimad
+git clone https://github.com/YOUR_ORG/bicimad-demand-predictor.git ~/bicimad-demand-predictor
+cd ~/bicimad-demand-predictor
 
 # 2. Copiar la clave del service account (misma que la de Airflow)
 # (desde tu máquina local en otra terminal)
-gcloud compute scp gcp-key.json bicimad-mlflow:~/bicimad/infra/gcp-key.json \
+gcloud compute scp gcp-key.json bicimad-mlflow:~/bicimad-demand-predictor/infra/gcp-key.json \
   --zone=europe-west1-b
-chmod 600 ~/bicimad/infra/gcp-key.json
+chmod 600 ~/bicimad-demand-predictor/infra/gcp-key.json
 
 # 3. Crear mlflow.env y rellenar el bucket
 cp infra/mlflow.env.example infra/mlflow.env
@@ -264,14 +264,14 @@ Antes de activar el DAG, puedes probar la ingesta manualmente desde la VM de Air
 
 ```bash
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && PYTHONPATH=. python -m src.ingestion.main"
+  "cd ~/bicimad-demand-predictor && PYTHONPATH=. python -m src.ingestion.main"
 # → debe mostrar el nº de estaciones descargadas y confirmación de escritura en GCS/BQ
 ```
 
 ```bash
 # Ver últimos logs del DAG de ingesta (tras activarlo)
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "docker compose -f ~/bicimad/infra/docker-compose.yml logs --tail=50 airflow-scheduler"
+  "docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.yml logs --tail=50 airflow-scheduler"
 
 # Verificar datos en GCS
 gsutil ls "gs://bicimad-data-YOUR_PROJECT_ID/raw/station_status/" | tail -5
@@ -333,7 +333,7 @@ El entrenamiento también registra el experimento en MLflow y promueve el modelo
 # Trigger manual del DAG de monitorización desde Airflow UI,
 # o ejecutar directamente:
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && PYTHONPATH=. python -m src.monitoring.daily_metrics --date $(date -d 'yesterday' +%F)"
+  "cd ~/bicimad-demand-predictor && PYTHONPATH=. python -m src.monitoring.daily_metrics --date $(date -d 'yesterday' +%F)"
 
 # Verificar tablas
 bq query --nouse_legacy_sql \
@@ -348,7 +348,7 @@ gsutil ls "gs://bicimad-data-YOUR_PROJECT_ID/monitoring/drift/"
 ```bash
 # Simular degradación: las alertas se loggean como WARNING, no lanzan excepciones
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && PYTHONPATH=. python -m src.monitoring.alerts"
+  "cd ~/bicimad-demand-predictor && PYTHONPATH=. python -m src.monitoring.alerts"
 # → buscar "PERFORMANCE ALERT" o "DRIFT ALERT" en la salida
 ```
 
@@ -373,7 +373,7 @@ make run-training-job GCP_PROJECT=YOUR_PROJECT_ID GCP_REGION=europe-west1
 ```bash
 # Desde el Airflow UI: DAG bicimad_ingestion → Calendar → seleccionar rango → Backfill
 # O desde CLI en la VM:
-docker compose -f ~/bicimad/infra/docker-compose.yml exec airflow-webserver \
+docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.yml exec airflow-webserver \
   airflow dags backfill bicimad_ingestion \
     --start-date 2026-01-01 \
     --end-date 2026-01-02
@@ -383,14 +383,14 @@ docker compose -f ~/bicimad/infra/docker-compose.yml exec airflow-webserver \
 
 ```bash
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "docker compose -f ~/bicimad/infra/docker-compose.yml logs -f --tail=100 airflow-scheduler"
+  "docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.yml logs -f --tail=100 airflow-scheduler"
 ```
 
 ### Reiniciar Airflow completo
 
 ```bash
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && make airflow-down && make airflow-up"
+  "cd ~/bicimad-demand-predictor && make airflow-down && make airflow-up"
 ```
 
 ### Consultar la API de predicciones (Serving)
@@ -415,7 +415,7 @@ make serve
 ```bash
 # Generar manualmente y obtener URL firmada (válida 1 hora)
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && PYTHONPATH=. python -m src.monitoring.dashboard"
+  "cd ~/bicimad-demand-predictor && PYTHONPATH=. python -m src.monitoring.dashboard"
 
 gsutil signurl -d 1h gcp-key.json \
   "gs://bicimad-data-YOUR_PROJECT_ID/monitoring/dashboard/index.html"
@@ -436,7 +436,7 @@ El bucket GCS tiene una lifecycle rule de **365 días**: los objetos más antigu
    - **Token EMT expirado**: el código renueva automáticamente usando Secret Manager. Si persiste el error 401, borrar el cache del token (`rm /tmp/.bicimad_token_cache.json` en la VM de Airflow dentro del contenedor) para forzar reautenticación inmediata. Si Secret Manager no responde, revisar permisos del service account.
    - **BQ streaming insert timeout**: transitorio, el DAG reintenta 3 veces con backoff
    - **Open-Meteo no disponible**: la ingesta continúa sin datos meteorológicos; el campo `weather_snapshot` quedará `null` en esos registros. Es comportamiento esperado, no indica un bug.
-   - **Errores de permisos en GCS/BQ**: comprobar que `GOOGLE_APPLICATION_CREDENTIALS` en `infra/airflow.env` apunta a `/opt/airflow/keys/gcp-key.json` y que el fichero está montado en el contenedor: `docker compose -f ~/bicimad/infra/docker-compose.yml exec airflow-webserver ls /opt/airflow/keys/`
+   - **Errores de permisos en GCS/BQ**: comprobar que `GOOGLE_APPLICATION_CREDENTIALS` en `infra/airflow.env` apunta a `/opt/airflow/keys/gcp-key.json` y que el fichero está montado en el contenedor: `docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.yml exec airflow-webserver ls /opt/airflow/keys/`
 
 ### DAG de training falla (Cloud Run Job)
 
@@ -468,7 +468,7 @@ gcloud compute instances reset bicimad-airflow \
 # Tras el reinicio, Docker y Docker Compose arrancan solos (configurado en startup script)
 # Verificar estado
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "docker compose -f ~/bicimad/infra/docker-compose.yml ps"
+  "docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.yml ps"
 ```
 
 ### MLflow no responde o el modelo no tiene alias @prod
@@ -476,11 +476,11 @@ gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
 ```bash
 # Verificar estado del servidor MLflow
 gcloud compute ssh bicimad-mlflow --zone=europe-west1-b -- \
-  "docker compose -f ~/bicimad/infra/docker-compose.mlflow.yml ps"
+  "docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.mlflow.yml ps"
 
 # Ver logs
 gcloud compute ssh bicimad-mlflow --zone=europe-west1-b -- \
-  "docker compose -f ~/bicimad/infra/docker-compose.mlflow.yml logs --tail=50 mlflow"
+  "docker compose -f ~/bicimad-demand-predictor/infra/docker-compose.mlflow.yml logs --tail=50 mlflow"
 ```
 
 Si el Cloud Run Job de training termina sin error pero el alias `@prod` no aparece en el model registry:
@@ -495,7 +495,7 @@ O desde la VM de Airflow vía Python:
 
 ```bash
 gcloud compute ssh bicimad-airflow --zone=europe-west1-b -- \
-  "cd ~/bicimad && PYTHONPATH=. python - <<'EOF'
+  "cd ~/bicimad-demand-predictor && PYTHONPATH=. python - <<'EOF'
 import mlflow, os
 client = mlflow.MlflowClient(os.environ['BICIMAD_MLFLOW_TRACKING_URI'])
 client.set_registered_model_alias('bicimad-forecast', 'prod', 'VERSION_NUMBER')
@@ -533,7 +533,7 @@ gcloud iam service-accounts keys create /tmp/new-key.json \
 
 # Copiar a la VM
 gcloud compute scp /tmp/new-key.json \
-  bicimad-airflow:~/bicimad/infra/gcp-key.json --zone=europe-west1-b
+  bicimad-airflow:~/bicimad-demand-predictor/infra/gcp-key.json --zone=europe-west1-b
 
 # Actualizar GitHub Secret AIRFLOW_VM_SSH_KEY con el nuevo valor
 # (desde la UI de GitHub o con gh CLI):

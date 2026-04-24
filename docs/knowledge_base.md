@@ -1,4 +1,17 @@
-# Infraestructura GCP con Terraform
+# Índice
+
+1. [Infraestructura GCP con Terraform](#1-infraestructura-gcp-con-terraform)
+2. [Apache Airflow en este proyecto](#2-apache-airflow-en-este-proyecto)
+3. [MLflow en este proyecto](#3-mlflow-en-este-proyecto)
+4. [Logging](#4-logging)
+5. [Pre-commit](#5-pre-commit)
+6. [Flujo de entrenamiento e inferencia](#6-flujo-de-entrenamiento-e-inferencia)
+7. [Ingesta](#7-ingesta)
+8. [Monitorización](#8-monitorización)
+
+---
+
+# 1. Infraestructura GCP con Terraform
 
 ## Los tres archivos de Terraform
 
@@ -112,7 +125,7 @@ Elimina todos los recursos creados. Pide confirmación antes de ejecutar. El buc
 
 ---
 
-# Apache Airflow en este proyecto
+# 2. Apache Airflow en este proyecto
 
 ## Qué es Airflow y para qué sirve aquí
 
@@ -377,7 +390,7 @@ El archivo `infra/airflow.env` (nunca commiteado) configura todos los servicios 
 
 ---
 
-# MLflow en este proyecto
+# 3. MLflow en este proyecto
 
 ## Qué es MLflow y qué problema resuelve
 
@@ -524,7 +537,7 @@ Todas configurables en `infra/airflow.env` con el prefijo `BICIMAD_`:
 
 ---
 
-# Logging
+# 4. Logging
 
 ## Librería y formato
 
@@ -568,7 +581,7 @@ El scheduler de Airflow configura su propio logging internamente. Las tareas que
 
 ---
 
-# Pre-commit
+# 5. Pre-commit
 
 ## Qué es y para qué sirve
 
@@ -620,7 +633,7 @@ Una vez instalado con `pre-commit install`, los hooks se ejecutan automáticamen
 
 ---
 
-# Flujo de entrenamiento e inferencia
+# 6. Flujo de entrenamiento e inferencia
 
 ## Visión general
 
@@ -772,7 +785,7 @@ La API es actualmente una herramienta de consulta local/dev. No está desplegada
 
 ---
 
-# Ingesta
+# 7. Ingesta
 
 ## Qué hace y cuándo se ejecuta
 
@@ -820,7 +833,7 @@ Descrita en detalle en la sección **Flujo de entrenamiento e inferencia**. En r
 
 ---
 
-# Monitorización
+# 8. Monitorización
 
 ## Qué monitoriza el sistema y cuándo
 

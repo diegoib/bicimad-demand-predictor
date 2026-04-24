@@ -122,7 +122,6 @@ All variables use the `BICIMAD_` prefix. A `.env` file is also supported.
 ```bash
 make features            # Build the feature dataset from BigQuery
 make train               # Train model locally
-make train -- --optuna   # Train with Optuna hyperparameter search
 make serve               # Start FastAPI server on :8000
 make test                # Run the test suite
 make lint                # ruff + mypy
