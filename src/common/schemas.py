@@ -197,6 +197,33 @@ class StationDailyMetrics(BaseModel):
     daily_rmse: float = Field(description="Root mean squared error across all cycles")
 
 
+# ---------------------------------------------------------------------------
+# MCP server schemas
+# ---------------------------------------------------------------------------
+
+
+class StationInfo(BaseModel):
+    """Station catalog entry — current status plus static metadata.
+
+    Built from the latest ``station_status_raw`` snapshot; there is no
+    dedicated station dimension table. Used by the BiciMAD MCP server's
+    data layer (src/mcp/server/data_layer.py).
+    """
+
+    station_id: int
+    name: str
+    number: str
+    activate: int = Field(description="1 = active, 0 = inactive")
+    total_bases: int
+    dock_bikes: int
+    free_bases: int
+    latitude: float
+    longitude: float
+    updated_at: datetime = Field(
+        description="Timestamp of the station_status_raw snapshot this entry was read from"
+    )
+
+
 class OverallDailyMetrics(BaseModel):
     """Total daily aggregated prediction error metrics across all stations.
 

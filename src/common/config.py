@@ -40,5 +40,9 @@ class Settings(BaseSettings):
     # Overridable via BICIMAD_FEATURE_WARMUP_DAYS.
     feature_warmup_days: int = 7
 
+    # MCP server in-memory cache TTL (station catalog, model metadata).
+    # Matches the ingestion cycle so a refresh always picks up new data.
+    mcp_cache_ttl_seconds: int = 900
+
 
 settings = Settings()

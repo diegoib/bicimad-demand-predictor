@@ -41,8 +41,21 @@ _ROWS_PARSED: list[BatchPredictionRow] = [
 
 @pytest.fixture()  # type: ignore[misc]
 def patched_client() -> TestClient:
-    """Client with _load_latest_bigquery mocked to return sample predictions."""
-    with patch.object(app_module, "_load_latest_bigquery", return_value=_ROWS_PARSED):
+    """Client with load_latest_predictions mocked to return sample predictions."""
+    with patch.object(app_module, "load_latest_predictions", return_value=_ROWS_PARSED):
+        yield TestClient(app)
+
+
+def _station_lookup(station_id: int) -> BatchPredictionRow | None:
+    return next((r for r in _ROWS_PARSED if r.station_id == station_id), None)
+
+
+@pytest.fixture()  # type: ignore[misc]
+def patched_station_client() -> TestClient:
+    """Client with load_latest_prediction_for_station mocked per station_id."""
+    with patch.object(
+        app_module, "load_latest_prediction_for_station", side_effect=_station_lookup
+    ):
         yield TestClient(app)
 
 
@@ -124,13 +137,13 @@ def test_predictions_station_no_data_returns_503() -> None:
     assert resp.status_code == 503
 
 
-def test_predictions_station_not_found_returns_404(patched_client: TestClient) -> None:
-    resp = patched_client.get("/predictions/9999")
+def test_predictions_station_not_found_returns_404(patched_station_client: TestClient) -> None:
+    resp = patched_station_client.get("/predictions/9999")
     assert resp.status_code == 404
 
 
-def test_predictions_station_valid(patched_client: TestClient) -> None:
-    resp = patched_client.get("/predictions/1")
+def test_predictions_station_valid(patched_station_client: TestClient) -> None:
+    resp = patched_station_client.get("/predictions/1")
     assert resp.status_code == 200
     body = resp.json()
     assert body["station_id"] == 1
@@ -138,8 +151,8 @@ def test_predictions_station_valid(patched_client: TestClient) -> None:
     assert body["model_version"] == "v20260101_120000"
 
 
-def test_predictions_station_target_time(patched_client: TestClient) -> None:
-    body = patched_client.get("/predictions/1").json()
+def test_predictions_station_target_time(patched_station_client: TestClient) -> None:
+    body = patched_station_client.get("/predictions/1").json()
     made_at = datetime.fromisoformat(body["prediction_made_at"])
     target = datetime.fromisoformat(body["target_time"])
     assert target - made_at == timedelta(hours=1)
