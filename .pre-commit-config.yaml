@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -10,19 +10,27 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.6
+    rev: v0.15.10
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.6.1
+    rev: v1.20.1
     hooks:
       - id: mypy
+        # Scope matches `make lint` (mypy runs on src/ only — see Makefile).
+        # tests/ has never been mypy-strict-checked in this project; without
+        # this, upgrading mypy surfaces pre-existing typing gaps there that
+        # were never part of the enforced contract.
+        files: ^src/
         additional_dependencies:
           - pydantic>=2.0
           - pydantic-settings>=2.0
           - types-requests
           - types-python-dateutil
+          - mcp[cli]>=2.0,<3
+          - google-cloud-bigquery>=3.11
+          - mlflow==3.11.1
         args: [--ignore-missing-imports, --no-warn-unused-ignores]

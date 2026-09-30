@@ -2,3 +2,4 @@ Añadir al knowledge base:
     - cómo funciona el MCP y diferencias entre tools, resources y prompts
     - explicar el error handling con errors.py
     - explicar el stderr y stdout, y por qué en el MCP todo tiene que ir por stderr
+    - arquitectura mcp, porque cliente y server viven en el mismo lugar

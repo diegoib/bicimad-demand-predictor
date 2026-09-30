@@ -117,6 +117,22 @@ decoradores existen.
   `get_station_status`, `search_stations`, `find_nearest_stations` y
   `forecast_availability` no dependen de MLflow en absoluto y no se ven
   afectadas.
+- **Despliegue en Docker**: el servidor MCP se empaqueta en una imagen
+  propia (`Dockerfile` nuevo junto a `src/mcp/server/`, `ENTRYPOINT` en
+  `server.py`), pero **se lanza por sesión** (`docker run --rm -i
+  bicimad-mcp`) en vez de vivir siempre encendido en `docker-compose.yml`.
+  Motivo: el transporte es stdio — no escucha en ningún puerto, no hay nada
+  que un healthcheck tipo `curl` pueda comprobar, y su ciclo de vida natural
+  es "un cliente lo lanza como subproceso cuando lo necesita", justo lo
+  contrario del patrón `restart: unless-stopped` que usan Airflow/MLflow/la
+  API FastAPI en `infra/`. Migrar a Streamable HTTP para que sí encajara en
+  `docker-compose.yml` como un servicio más es una opción real, pero
+  deliberadamente fuera de alcance de este plan (ver "Extensiones
+  futuras") — el objetivo declarado es aprender el ciclo de vida de una
+  sesión stdio (Fases 1-4), no optimizar el despliegue antes de tiempo.
+  Pendiente de implementar: el `Dockerfile`, y decidir cómo lo invoca
+  Claude Desktop/Code en la Fase 5 (¿`docker run` directo, o vía SSH desde
+  la máquina donde corra el host MCP?).
 
 ## Arquitectura
 
@@ -323,6 +339,16 @@ protocolo y no mezclar bugs de negocio con bugs de protocolo.
 - **Generación de JSON Schema desde type hints**: qué tipos de Python el SDK
   sabe traducir directamente (`int`, `str`, `float`, `Literal`, dataclasses/
   Pydantic) y dónde hace falta anotar más (ej. `Field(description=...)`).
+- **Corrección tras ver el JSON-RPC crudo en la Fase 3 (`--verbose`)**: el
+  SDK v2 **no** usa el par clásico `initialize`/`initialized` de la
+  especificación base — el cliente manda un único `server/discover` que ya
+  incluye `protocolVersion`, `clientInfo` y `clientCapabilities`, y el
+  servidor responde de una vez con `capabilities`, `supportedVersions` y
+  campos propios del SDK (`cacheScope`, `resultType: "complete"`) que no
+  son parte del protocolo base. Es una optimización de esta implementación
+  concreta sobre el handshake de dos mensajes que describe la spec — buen
+  recordatorio de que "leer la spec" y "leer lo que hace un SDK real" no
+  siempre coinciden exactamente.
 
 ---
 
