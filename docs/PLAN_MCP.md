@@ -30,11 +30,29 @@ documentación (no asumidos de memoria, porque el SDK v1 tenía una API distinta
   `name`, `title`, `description`, `input_schema`). `await
   client.call_tool(name, args)` → `CallToolResult` (`.content`,
   `.structured_content`, `.is_error`).
-- Errores: una tool que lanza una excepción **no** propaga la excepción al
-  cliente — vuelve como `CallToolResult` normal con `is_error=True` y el
-  mensaje en `.content`. Esto cubre tanto errores de negocio (ej. estación no
-  encontrada) como pedir una tool inexistente. Confirma el patrón que pide el
-  encargo: errores como resultado de tool, no como excepción de protocolo.
+- Errores: **corregido tras probar el servidor real en la Fase 1** — no basta
+  con dejar que la excepción de dominio se propague. El SDK distingue:
+  - `raise ToolError(mensaje)` (de `mcp.server.mcpserver.exceptions`) →
+    `is_error=True` con `mensaje` tal cual en `.content`, logueado a INFO sin
+    traceback. Es el caso "el modelo pudo haber evitado esto" (station_id
+    inválido, argumento mal formado, fila no encontrada...).
+  - Cualquier **otra** excepción (incluida una excepción de dominio propia
+    como `StationNotFoundError` sin traducir) → se trata como un *crash*:
+    el cliente solo ve `"Error executing tool <nombre>"` (mensaje genérico,
+    el texto original se descarta por seguridad) y el servidor loguea el
+    traceback completo a ERROR. Es el caso "esto es un fallo de
+    infraestructura, no algo que el modelo pueda arreglar reformulando" (p.
+    ej. BigQuery caído).
+  - Por tanto: `src/mcp/server/errors.py` sigue siendo agnóstico de MCP (no
+    importa `mcp`), pero cada tool en `server.py` debe capturar sus
+    excepciones de dominio esperadas y relanzarlas como
+    `ToolError(str(e))`. Ver `get_station_status` en la Fase 1 como
+    plantilla del patrón a repetir en la Fase 2 para `search_stations`,
+    `find_nearest_stations` y `forecast_availability`.
+  - Para errores que el modelo *no* puede arreglar reformulando (p. ej.
+    parámetros claramente malformados que ameritan un error de protocolo),
+    existe también `mcp.types.INVALID_PARAMS` + `MCPError` — no usado en
+    este plan, documentado en `.../servers/handling-errors/`.
 - Instalación: `uv add "mcp[cli]"` (o `pip install "mcp[cli]"`). Python 3.10+
   (compatible con el 3.11+ que ya usa este repo).
 
@@ -266,9 +284,14 @@ protocolo y no mezclar bugs de negocio con bugs de protocolo.
 1. `src/mcp/server/server.py`: `mcp = MCPServer("bicimad")`, una sola tool,
    `get_station_status(station_id: int)`, que llama a la capa de datos de la
    Fase 0.
-2. Logging: `src.common.logging_setup.setup_logging()` configurado a stderr
-   explícitamente (ya lo hace el repo para otros módulos — confirmar que no
-   escribe nada a stdout, porque en stdio ese canal es del protocolo JSON-RPC).
+2. Logging: `setup_logging()` en `src/common/logging_setup.py` escribe hoy a
+   `sys.stdout` explícitamente (`StreamHandler(sys.stdout)`), lo cual
+   contaminaría el canal JSON-RPC si el servidor MCP la llama tal cual.
+   Parametrizar la función (`setup_logging(stream: TextIO = sys.stdout)`,
+   con `sys.stdout` como default para no tocar el comportamiento de
+   `app.py`/DAGs/scripts batch) y que `server.py` la llame con
+   `setup_logging(stream=sys.stderr)`. Cambio mínimo, sin afectar a los
+   demás consumidores de `setup_logging()`.
 3. `if __name__ == "__main__": mcp.run()`.
 4. Probar con `uv run mcp dev src/mcp/server/server.py` (MCP Inspector) a
    mano: listar tools, llamar `get_station_status` con un id real y con uno
@@ -319,9 +342,13 @@ protocolo y no mezclar bugs de negocio con bugs de protocolo.
 3. Prompts:
    - `plan_trip(origen: str, destino: str, hora: str)`.
    - `station_report(station_id: str)`.
-4. Manejo de errores uniforme: cada tool valida su entrada y traduce
-   excepciones de dominio (`StationNotFoundError`, etc.) en mensajes claros;
-   dejar que el SDK las convierta en `is_error=True` (no capturar y ocultar).
+4. Manejo de errores uniforme: cada tool captura sus excepciones de dominio
+   esperadas (`StationNotFoundError`, `ForecastUnavailableError`,
+   `ModelUnavailableError`) y las relanza como
+   `raise ToolError(str(e)) from e` — igual que `get_station_status` en la
+   Fase 1 (ver "SDK de referencia" arriba). Sin este paso el mensaje no
+   llega al modelo: cualquier excepción que no sea `ToolError`/`MCPError`
+   se sustituye por un `"Error executing tool <nombre>"` genérico.
 5. Actualizar `tests/test_mcp/test_server_tools.py`: llamar las funciones
    decoradas directamente (sin pasar por transporte) para tests rápidos, más
    1-2 tests de integración con `Client` en memoria contra el propio objeto
