@@ -59,6 +59,31 @@ def patched_station_client() -> TestClient:
         yield TestClient(app)
 
 
+@pytest.fixture()  # type: ignore[misc]
+def failing_client() -> TestClient:
+    """Client with load_latest_predictions mocked to raise (simulates a BigQuery failure).
+
+    Deliberately mocked rather than relying on the absence of GCP credentials
+    in the test environment — that ambient assumption breaks the moment ADC
+    is configured locally (e.g. for manual testing against real data).
+    """
+    with patch.object(
+        app_module, "load_latest_predictions", side_effect=RuntimeError("BigQuery unavailable")
+    ):
+        yield TestClient(app)
+
+
+@pytest.fixture()  # type: ignore[misc]
+def failing_station_client() -> TestClient:
+    """Client with load_latest_prediction_for_station mocked to raise."""
+    with patch.object(
+        app_module,
+        "load_latest_prediction_for_station",
+        side_effect=RuntimeError("BigQuery unavailable"),
+    ):
+        yield TestClient(app)
+
+
 # ---------------------------------------------------------------------------
 # /health
 # ---------------------------------------------------------------------------
@@ -70,8 +95,8 @@ def test_health_always_200() -> None:
     assert resp.json()["status"] == "ok"
 
 
-def test_health_no_predictions() -> None:
-    body = client.get("/health").json()
+def test_health_no_predictions(failing_client: TestClient) -> None:
+    body = failing_client.get("/health").json()
     assert body["predictions_available"] == 0
     assert body["latest_snapshot"] is None
 
@@ -87,8 +112,8 @@ def test_health_with_predictions(patched_client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_predictions_latest_no_data_returns_503() -> None:
-    resp = client.get("/predictions/latest")
+def test_predictions_latest_no_data_returns_503(failing_client: TestClient) -> None:
+    resp = failing_client.get("/predictions/latest")
     assert resp.status_code == 503
 
 
@@ -132,8 +157,8 @@ def test_predictions_latest_values(patched_client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_predictions_station_no_data_returns_503() -> None:
-    resp = client.get("/predictions/1")
+def test_predictions_station_no_data_returns_503(failing_station_client: TestClient) -> None:
+    resp = failing_station_client.get("/predictions/1")
     assert resp.status_code == 503
 
 

@@ -384,6 +384,19 @@ protocolo y no mezclar bugs de negocio con bugs de protocolo.
   protocolo (método no existe) y un error de dominio bien modelado
   (`is_error=True` con texto que un LLM puede usar para decidir el siguiente
   paso, ej. reintentar con otro station_id).
+- **Errores de tools vs. errores de resources son mecanismos distintos —
+  comprobado en vivo, no solo leído en la doc**: `raise ToolError(...)` en
+  una tool vuelve al cliente como un resultado normal con `is_error=True`
+  (el modelo lo ve y puede reaccionar). `raise ResourceNotFoundError(...)` /
+  `ResourceError(...)` en un resource, en cambio, **no** vuelve como un
+  resultado — el cliente lo recibe como una excepción `MCPError` de
+  protocolo (`-32602`/`-32603`) que hay que capturar con
+  `try/except MCPError` alrededor de `read_resource()`. Confirmado
+  ejecutando `bicimad://stations/9999` contra el servidor real: lanza
+  `MCPError`, no devuelve un resultado con flag de error. Esto importa para
+  la Fase 3/4: el cliente necesita manejo de errores diferente para
+  `call_tool()` (mirar `.is_error`) que para `read_resource()` (capturar la
+  excepción).
 
 ---
 
