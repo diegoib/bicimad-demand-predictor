@@ -1,6 +1,9 @@
 Añadir al knowledge base:
     - cómo funciona el MCP y diferencias entre tools, resources y prompts
-    - explicar el error handling con errors.py
-    - explicar el stderr y stdout, y por qué en el MCP todo tiene que ir por stderr
     - arquitectura mcp, porque cliente y server viven en el mismo lugar
+    - explicar el stderr y stdout, y por qué en el MCP todo tiene que ir por stderr
+    - explicar el error handling con errors.py
+    - qué es un repl
     - poner en el runbook como ejecutar el repl, el agente, y como conectar el mcp al cliente actual de claude code
+    - actualizar readme.md con la información del MCP
+    - revisar CLAUDE.md para actualizar / borrar las cosas que ya no sean pertinentes

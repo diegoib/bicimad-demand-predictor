@@ -13,6 +13,7 @@ Este repositorio contiene un sistema batch de ML para predecir la disponibilidad
 - Google Cloud: Cloud Storage, BigQuery, Cloud Run Jobs, Artifact Registry
 - Pydantic v2 (validación de schemas y configuración)
 - pytest para tests
+- MCP Python SDK + Anthropic SDK (`src/mcp/` — capa educativa opcional sobre el sistema batch, ver `docs/PLAN_MCP.md`; no forma parte de las "Decisiones ya tomadas" del batch)
 
 ## Estructura del repositorio
 
@@ -24,11 +25,12 @@ bicimad-demand-forecast/
 │   ├── training/           # Pipeline de entrenamiento y model registry
 │   ├── serving/            # API FastAPI
 │   ├── monitoring/         # Drift + alertas
-│   └── common/             # Código compartido (schemas, config, logging)
+│   ├── common/             # Código compartido (schemas, config, logging)
+│   └── mcp/                # Servidor + clientes MCP (educativo, ver docs/PLAN_MCP.md)
 ├── dags/                   # DAGs de Airflow (orquestación pura)
-├── tests/                  # Tests unitarios por módulo
+├── tests/                  # Tests unitarios por módulo (incluye tests/test_mcp/)
 ├── infra/                  # Terraform + docker-compose.yml + docker-compose.mlflow.yml
-├── docs/                   # Documentación
+├── docs/                   # Documentación (incluye PLAN_MCP.md y knowledge_base.md)
 ├── pyproject.toml          # Dependencias unificadas
 ├── Makefile                # Comandos: make train, make serve, make test…
 └── CLAUDE.md               # Este archivo

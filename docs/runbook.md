@@ -14,6 +14,7 @@ Guía operacional para despliegue, mantenimiento y recuperación de fallos.
 4. [Operaciones habituales](#4-operaciones-habituales)
 5. [Recuperación de fallos](#5-recuperación-de-fallos)
 6. [Secretos y credenciales](#6-secretos-y-credenciales)
+7. [Servidor MCP](#7-servidor-mcp)
 
 ---
 
@@ -545,3 +546,100 @@ gcloud iam service-accounts keys list \
 gcloud iam service-accounts keys delete OLD_KEY_ID \
   --iam-account=bicimad-ingestion@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
+
+---
+
+## 7. Servidor MCP
+
+Capa educativa opcional (`src/mcp/`, ver `docs/PLAN_MCP.md` y `docs/knowledge_base.md` secciones 9-13). Requiere instalar el grupo opcional de dependencias:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### 7.1 REPL manual (sin modelo)
+
+Para probar el servidor a mano, sin ningún LLM de por medio — útil para descartar si un fallo viene del servidor/protocolo o de una mala decisión del modelo (ver sección 13 del knowledge base):
+
+```bash
+python -m src.mcp.client.repl
+python -m src.mcp.client.repl --verbose   # muestra el JSON-RPC crudo que cruza el cable
+```
+
+Dentro del REPL:
+
+```
+tools                                   # lista las tools
+call get_station_status {"station_id": 1437}
+resources                               # lista resources y plantillas
+read bicimad://stations
+prompts
+prompt plan_trip {"origen": "Sol", "destino": "Atocha", "hora": "18:00"}
+exit
+```
+
+### 7.2 Cliente agéntico (con modelo)
+
+Requiere `ANTHROPIC_API_KEY` en `.env` (leída vía `src.common.config.settings`, ver `src/common/config.py::Settings.anthropic_api_key`):
+
+```bash
+python -m src.mcp.client.agent
+```
+
+Comandos especiales dentro de la sesión:
+- `/stations` — carga el catálogo completo como contexto para el resto de la sesión.
+- `/plan {"origen": "...", "destino": "...", "hora": "..."}` — usa el prompt `plan_trip` como siguiente turno.
+- `exit` — cierra la sesión.
+
+Cualquier otro texto se envía al modelo, que decide qué tools llamar (se imprime cada llamada antes de ejecutarla).
+
+### 7.3 MCP Inspector
+
+GUI de pruebas del propio SDK, alternativa al REPL manual:
+
+```bash
+uv run mcp dev src/mcp/server/server.py
+```
+
+### 7.4 Conectar el servidor a Claude Code
+
+El propio Claude Code puede usar `bicimad` como un servidor MCP más — el servidor no cambia, es el mismo `server.py` que usan `repl.py` y `agent.py`.
+
+**Vía CLI**, desde la raíz del repo:
+
+```bash
+claude mcp add bicimad -- /ruta/al/repo/.venv/bin/python -m src.mcp.server.server
+```
+
+**Vía UI** (extensión de VSCode → panel "MCP servers" → "Add MCP server"):
+
+| Campo | Valor |
+|---|---|
+| Name | `bicimad` |
+| Transport | `Local command (stdio)` |
+| Command | ruta absoluta al intérprete del venv del repo, p. ej. `/workspace/.venv/bin/python` |
+| Arguments | `-m` y `src.mcp.server.server`, uno por línea |
+| Environment variables | normalmente vacío — `ANTHROPIC_API_KEY`/`BICIMAD_GCP_PROJECT` ya se leen de `.env` al arrancar |
+| Scope | `Local` para uso individual, `Project` si se quiere versionar en `.mcp.json` |
+
+> El proceso necesita arrancar con la **raíz del repo** como working directory (los imports de `server.py` son absolutos, `from src...`). Si el host no lo hace por defecto, un `ModuleNotFoundError: No module named 'src'` es la señal de que el cwd no es el esperado.
+
+Tras añadirlo, verificar que aparece conectado y expone 4 tools, 3 resources y 2 prompts.
+
+### 7.5 Conectar el servidor a Claude Desktop
+
+Añadir en `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "bicimad": {
+      "command": "/ruta/al/repo/.venv/bin/python",
+      "args": ["-m", "src.mcp.server.server"],
+      "cwd": "/ruta/al/repo"
+    }
+  }
+}
+```
+
+A diferencia de la UI de Claude Code, aquí sí hay un campo `cwd` explícito — usarlo para evitar el mismo problema de imports relativos de la raíz del repo.

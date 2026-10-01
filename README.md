@@ -147,14 +147,15 @@ bicimad-demand-forecast/
 │   ├── features/       # Feature engineering (build_features, feature_definitions)
 │   ├── training/       # Train, evaluate, temporal split, model registry (MLflow + GCS)
 │   ├── serving/        # FastAPI app — reads pre-computed predictions from BigQuery
-│   └── monitoring/     # Drift reports, daily metrics, reconciliation, alerts
+│   ├── monitoring/     # Drift reports, daily metrics, reconciliation, alerts
+│   └── mcp/            # MCP server + clients (educational add-on, see docs/PLAN_MCP.md)
 ├── dags/               # Airflow DAGs (pure orchestration — no business logic)
 │   ├── ingestion_dag.py
 │   ├── training_dag.py
 │   └── daily_monitoring_dag.py
-├── tests/              # Unit tests mirroring src/ structure
+├── tests/              # Unit tests mirroring src/ structure (includes tests/test_mcp/)
 ├── infra/              # docker-compose.yml (Airflow), docker-compose.mlflow.yml, Terraform
-├── docs/               # Design doc
+├── docs/               # Design docs, PLAN_MCP.md, knowledge_base.md
 ├── notebooks/          # Exploratory analysis (not production)
 ├── pyproject.toml      # Unified dependency definitions
 ├── Makefile
@@ -176,6 +177,27 @@ bicimad-demand-forecast/
 - **Daily metrics**: per-station and overall daily MAE/RMSE aggregated into `station_daily_metrics` and `daily_totals` tables.
 - **Drift detection**: Evidently reports comparing recent feature distributions against the training baseline.
 - **Alerts**: degradation alerts fire when online MAE exceeds a configurable threshold relative to the training MAE stored in model metadata.
+
+## MCP server (educational add-on)
+
+`src/mcp/` is a separate, optional layer that exposes the same station/prediction data over the [Model Context Protocol](https://modelcontextprotocol.io/), built to learn the protocol itself — not part of the core batch pipeline's "decisions already made" (see `CLAUDE.md`). It reuses the project's existing data access code (`src/serving/predictions_query.py`, BigQuery, MLflow) rather than duplicating it.
+
+```bash
+# Install the extra dependency group
+pip install -e ".[mcp]"
+
+# Manual REPL client (no LLM — drive the protocol by hand)
+python -m src.mcp.client.repl
+python -m src.mcp.client.repl --verbose   # prints raw JSON-RPC traffic
+
+# Agentic client (Claude decides which tools to call; needs ANTHROPIC_API_KEY in .env)
+python -m src.mcp.client.agent
+
+# MCP Inspector (Anthropic's own GUI test client)
+uv run mcp dev src/mcp/server/server.py
+```
+
+The server exposes 4 tools (`get_station_status`, `search_stations`, `find_nearest_stations`, `forecast_availability`), 3 resources (`bicimad://stations`, `bicimad://stations/{station_id}`, `bicimad://model-card`) and 2 prompts (`plan_trip`, `station_report`) over stdio. Full design, phased implementation plan and the concepts behind each decision: `docs/PLAN_MCP.md` and `docs/knowledge_base.md` (sections 9–13). Operational instructions (connecting to Claude Code/Desktop, troubleshooting): `docs/runbook.md`.
 
 ## Data sources
 
