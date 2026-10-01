@@ -5,6 +5,7 @@ Dev and prod both use GCP — dev uses a separate GCP project (e.g. bicimad-dev)
 with Application Default Credentials (gcloud auth application-default login).
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +40,16 @@ class Settings(BaseSettings):
     # (7 days: avg_dock_same_hour_7d, station_daily_turnover, dock_bikes_same_time_1w).
     # Overridable via BICIMAD_FEATURE_WARMUP_DAYS.
     feature_warmup_days: int = 7
+
+    # MCP server in-memory cache TTL (station catalog, model metadata).
+    # Matches the ingestion cycle so a refresh always picks up new data.
+    mcp_cache_ttl_seconds: int = 900
+
+    # Anthropic API key for src/mcp/client/agent.py. Unprefixed on purpose:
+    # ANTHROPIC_API_KEY is the Anthropic SDK's own standard env var name,
+    # not a BiciMAD setting — forcing a BICIMAD_ prefix on it would break
+    # that external convention for no benefit.
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
 
 
 settings = Settings()

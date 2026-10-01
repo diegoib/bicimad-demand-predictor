@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TextIO
 
 
 class JsonFormatter(logging.Formatter):
@@ -25,13 +25,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False)
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: int = logging.INFO, stream: TextIO = sys.stdout) -> None:
     """Configure root logger with JSON output.
 
     Args:
         level: Logging level (default INFO).
+        stream: Stream to write log lines to (default sys.stdout). The MCP
+            server passes sys.stderr here, since stdout is the JSON-RPC
+            protocol channel in stdio transport and must not be mixed with
+            log output.
     """
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stream)
     handler.setFormatter(JsonFormatter())
 
     root = logging.getLogger()

@@ -8,6 +8,11 @@
 6. [Flujo de entrenamiento e inferencia](#6-flujo-de-entrenamiento-e-inferencia)
 7. [Ingesta](#7-ingesta)
 8. [Monitorización](#8-monitorización)
+9. [Servidor MCP (Model Context Protocol)](#9-servidor-mcp-model-context-protocol)
+10. [Arquitecturas de despliegue de un servidor MCP](#10-arquitecturas-de-despliegue-de-un-servidor-mcp)
+11. [stdout y stderr en el transporte stdio de MCP](#11-stdout-y-stderr-en-el-transporte-stdio-de-mcp)
+12. [Manejo de errores: de errors.py a ToolError](#12-manejo-de-errores-de-errorspy-a-toolerror)
+13. [Qué es un REPL y por qué se ha construido aquí](#13-qué-es-un-repl-y-por-qué-se-ha-construido-aquí)
 
 ---
 
@@ -925,5 +930,308 @@ Si más del 30% de las features han cambiado su distribución, hay riesgo de deg
 ### Qué hacen las alertas cuando se disparan
 
 Loggean un mensaje `WARNING` con `PERFORMANCE ALERT` o `DRIFT ALERT` en el texto. Esos mensajes aparecen en los logs del DAG de Airflow y, si el SMTP está configurado en `airflow.env`, se envía un email al operador (Airflow tiene soporte nativo de alertas por email en `default_args`). **No hay integración con sistemas externos** como PagerDuty o Slack en la implementación actual.
+
+[↑ Volver al índice](#índice)
+
+---
+
+# 9. Servidor MCP (Model Context Protocol)
+
+## Qué es un MCP server, a grandes rasgos
+
+MCP (Model Context Protocol) es un protocolo abierto que estandariza cómo un modelo de lenguaje accede a datos y acciones externas a él. Antes de MCP, cada integración modelo↔herramienta se construía a medida (un conector distinto para cada combinación de modelo y sistema externo). MCP define un contrato único — JSON-RPC 2.0 sobre un transporte común — para que cualquier **servidor** que lo hable pueda conectarse a cualquier **cliente/host** que también lo hable, sin acoplamiento entre ambos.
+
+Tres roles distintos, fáciles de confundir al principio:
+
+| Rol | Qué es | Ejemplo en este proyecto |
+|---|---|---|
+| **Servidor MCP** | Expone datos/acciones de un dominio concreto. No sabe nada del modelo que lo va a usar. | `src/mcp/server/server.py` (`bicimad`) |
+| **Cliente MCP** | Habla el protocolo con un servidor: lista sus capacidades, llama tools, lee resources. No decide nada por sí mismo. | La clase `Client` del SDK, usada tanto en `repl.py` como en `agent.py` |
+| **Host** | La aplicación que usa uno o varios clientes MCP y, opcionalmente, pone un LLM en el bucle para decidir qué llamar. | `src/mcp/client/agent.py` (host hecho a mano, API de Anthropic directa); Claude Code y Claude Desktop (hosts ya construidos por Anthropic) |
+
+El transporte en este proyecto es **stdio**: el host lanza el servidor como subproceso y ambos se hablan por `stdin`/`stdout` con mensajes JSON-RPC 2.0, uno por línea. Por eso `stdout` es un canal sagrado — cualquier `print()` o logger mal configurado que escriba ahí rompe el framing del protocolo de forma silenciosa. Todo el logging del servidor va explícitamente a `stderr` (ver `src/mcp/server/server.py`, que llama a `setup_logging(stream=sys.stderr)`).
+
+## Tools, Resources y Prompts — tres mecanismos con intención distinta
+
+MCP no ofrece un único tipo de "capacidad" — separa tres, cada una con una semántica de uso diferente aunque dos de ellas puedan, en teoría, devolver el mismo JSON:
+
+| | Tools | Resources | Prompts |
+|---|---|---|---|
+| **Quién decide usarla** | El modelo, durante el bucle `tool_use` | El *host*, como contexto — el modelo no puede "pedir" un resource | El usuario, explícitamente |
+| **Qué representa** | Una acción o cómputo | Datos de solo lectura | Una plantilla de petición parametrizada |
+| **Mecanismo de error** | `raise ToolError(...)` → resultado normal con `is_error=True`; el modelo lo ve y puede reaccionar | `raise ResourceNotFoundError/ResourceError(...)` → excepción `MCPError` de protocolo (`-32602`/`-32603`); el cliente tiene que capturarla con `try/except` | Igual que resources — también vía `MCPError` |
+| **En este servidor** | `get_station_status`, `search_stations`, `find_nearest_stations`, `forecast_availability` | `bicimad://stations`, `bicimad://stations/{station_id}`, `bicimad://model-card` | `plan_trip`, `station_report` |
+
+La distinción tools/resources quedó demostrada de forma empírica (no solo documental) al ejecutar la evaluación de la Fase 5 (`tests/test_mcp/eval_results.md`): preguntas que pedían exactamente lo que expone `bicimad://model-card` o `bicimad://stations` resultaron en que el modelo respondiera "no tengo esa herramienta" en vez de inventar una respuesta — porque ningún resource se carga automáticamente en el bucle `tool_use`, solo si el host decide meterlo en el contexto de antemano (en `agent.py`, con el comando manual `/stations`).
+
+## El servidor MCP de este proyecto
+
+### Ubicación y capas
+
+```
+src/mcp/
+├── server/
+│   ├── data_layer.py   # Sin nada de MCP — StationCatalog, get_latest_forecast,
+│   │                    # get_model_metadata. Testeable con pytest puro.
+│   ├── errors.py        # Excepciones de dominio agnósticas de MCP:
+│   │                    # StationNotFoundError, ModelUnavailableError,
+│   │                    # ForecastUnavailableError
+│   └── server.py        # MCPServer("bicimad") + tools/resources/prompts.
+│                         # Único punto donde las excepciones de dominio se
+│                         # traducen a ToolError/ResourceError.
+└── client/
+    ├── repl.py           # Cliente manual sin LLM — tú tecleas los comandos
+    └── agent.py          # Host con bucle agéntico — Claude decide qué llamar
+```
+
+`errors.py` nunca importa `mcp` — es deliberado. Mantener las excepciones de dominio agnósticas del protocolo permite reutilizar `data_layer.py` fuera de MCP (de hecho, ya reutiliza `src/serving/predictions_query.py`, compartida con la API FastAPI) y deja en `server.py` la única responsabilidad de traducir "esto pasó en el dominio" a "esto es lo que el protocolo necesita ver":
+
+```python
+@mcp.tool(name="get_station_status", ...)
+def get_station_status(station_id: int) -> StationInfo:
+    try:
+        return _catalog.get(station_id)
+    except StationNotFoundError as e:
+        raise ToolError(str(e)) from e
+```
+
+Sin ese `try/except`, el modelo solo vería `"Error executing tool get_station_status"` — el SDK descarta el texto original de cualquier excepción que no sea `ToolError` por seguridad (evita filtrar detalles internos en errores no controlados), y loguea el traceback completo a `ERROR` en el servidor.
+
+### Capa de datos — de dónde salen los datos reales
+
+`data_layer.py` no inventa una fuente de datos nueva — reutiliza lo que ya existe en el proyecto:
+
+- **`StationCatalog`**: lee la última partición de `station_status_raw` (la misma tabla que usa la ingesta) y la cachea en memoria con TTL de 15 minutos (`BICIMAD_MCP_CACHE_TTL_SECONDS`), refresco perezoso en la siguiente llamada tras expirar.
+- **`get_latest_forecast`**: llama a `src/serving/predictions_query.py::load_latest_prediction_for_station` — la misma función que usa el endpoint `GET /predictions/{station_id}` de la API FastAPI. El servidor MCP nunca llama a esa API por HTTP; importa la función directamente, evitando acoplar su disponibilidad a que la API esté levantada.
+- **`get_model_metadata`**: consulta MLflow vía `MlflowClient` para leer metadata del alias `@prod` (versión, MAE, `run_id`) **sin cargar el booster de LightGBM** — el servidor MCP nunca ejecuta `.predict()`, así que no hay motivo para deserializar el modelo en memoria.
+
+### Clientes: dos formas de hablar con el mismo servidor
+
+| | `repl.py` | `agent.py` |
+|---|---|---|
+| Quién decide qué llamar | Tú, a mano (`call get_station_status {"station_id": 1}`) | El modelo, vía `tool_use` |
+| Objetivo | Aislar bugs de protocolo de bugs de un LLM — verificar el servidor por sí mismo | Bucle agéntico real: `messages.create(..., tools=...)` → `tool_use` → `call_tool()` → `tool_result` → repetir |
+| Traducción MCP↔Anthropic | Ninguna — habla MCP directamente | `_mcp_tools_to_anthropic()`: traduce `ListToolsResult.tools` al formato `tools=[...]` de la API de Anthropic |
+
+Ambos lanzan `server.py` igual: como subproceso con `StdioServerParameters(command=sys.executable, args=["-m", "src.mcp.server.server"], cwd=repo_root)`. El mismo `server.py`, sin modificar, también puede registrarse como servidor MCP en Claude Code o Claude Desktop (hosts que Anthropic ya construyó) — es la prueba de que el servidor no está acoplado a ninguna implementación concreta de cliente, el objetivo central de MCP como protocolo de interoperabilidad.
+
+Diseño completo, decisiones tomadas y fases de implementación en `docs/PLAN_MCP.md`.
+
+[↑ Volver al índice](#índice)
+
+---
+
+# 10. Arquitecturas de despliegue de un servidor MCP
+
+## stdio no es la única forma — es la más simple
+
+El protocolo MCP define varios **transportes** posibles entre cliente y servidor; `stdio` (el que usa este proyecto) es solo uno de ellos, y el que impone menos estructura. Que cliente y servidor "vivan en el mismo sitio" en `bicimad` no es un límite del protocolo — es una decisión de diseño concreta, adecuada a este caso de uso, y documentada como tal en `docs/PLAN_MCP.md` ("Decisiones ya tomadas").
+
+| | **stdio** (este proyecto) | **HTTP remoto** (Streamable HTTP) |
+|---|---|---|
+| Relación cliente↔servidor | 1:1 — un proceso servidor por sesión de cliente | N:1 — un servidor sirve a muchos clientes simultáneos |
+| Cómo arranca el servidor | El host lo lanza como subproceso (`docker run --rm -i` / `python -m ...`) cuando lo necesita | Proceso ya levantado de antemano, escuchando en un puerto, con su propio ciclo de vida (`restart: unless-stopped`) |
+| Canal de comunicación | `stdin`/`stdout` del propio subproceso — no hay red de por medio | Peticiones HTTP sobre la red, con sesión mantenida vía cabeceras |
+| Quién puede conectarse | Solo el proceso que lo lanzó — aislamiento total por diseño | Cualquier cliente que alcance la URL — requiere autenticación/autorización explícita (API keys, OAuth) |
+| Estado entre llamadas | Vive en memoria del proceso mientras dura la sesión; muere con ella (ver `StationCatalog` de este proyecto, cacheado en memoria del proceso del servidor) | Tiene que sobrevivir a múltiples conexiones/reinicios de cliente — normalmente externalizado (BD, caché compartida) |
+| Encaja de serie en `docker-compose.yml` | No — no hay puerto que exponer ni healthcheck `curl` que comprobar | Sí — es un servicio más, igual que la API FastAPI o MLflow en este mismo repo |
+| Casos de uso típicos | Herramientas CLI, plugins de IDE (Claude Code, Claude Desktop) — el cliente y el servidor corren en la misma máquina del usuario | Servidor MCP compartido por un equipo/organización, o un backend al que se conectan múltiples apps cliente (web, móvil) a la vez |
+
+## Por qué `bicimad` usa stdio
+
+El servidor MCP de este proyecto corre en la misma VM de GCP que MLflow, y los clientes que lo usan (`repl.py`, `agent.py`, o Claude Code/Desktop) también corren ahí o se conectan a esa VM — no hay necesidad de que terceros externos a la organización lo consuman. Con un único cliente por sesión, `stdio` evita de un plumazo dos problemas que sí tendría que resolver una versión HTTP: autenticación (¿quién tiene permiso para llamar `forecast_availability`?) y aislamiento de estado entre sesiones concurrentes (el `StationCatalog` cacheado en memoria asume implícitamente que solo hay un cliente hablando con ese proceso a la vez).
+
+La decisión no es permanente ni "la única correcta" — está explícitamente marcada como revisable en el plan si el caso de uso cambia. El ejemplo que la propia discusión de diseño usó para probarlo: si el cliente MCP viviera dentro de una app de chatbot en un móvil (en vez de en este mismo repo, como ahora), tendría más sentido un servidor HTTP remoto compartido por todos los usuarios de la app — ahí sí habría N clientes distintos (uno por usuario de móvil) hablando con el mismo servidor, lo que es exactamente el escenario para el que `stdio` no está pensado.
+
+## Qué cambiaría técnicamente al migrar a HTTP
+
+No es un simple cambio de `transport="stdio"` a `transport="http"` sin más consecuencias — implica rediseñar varias decisiones que hoy `bicimad` resuelve "gratis" por ser 1:1:
+
+- **`StationCatalog` y el caché de `get_model_metadata`** (hoy en memoria del proceso, ver sección 9) pasarían a compartirse entre clientes concurrentes — correcto para datos de solo lectura como este catálogo, pero habría que revisar cualquier estado que no deba compartirse entre sesiones.
+- **Autenticación**: `stdio` no necesita ninguna — el aislamiento lo da el sistema operativo (quién puede lanzar el subproceso). HTTP sí, porque cualquiera que alcance el puerto puede intentar conectarse.
+- **Despliegue**: pasaría de "se lanza por sesión" a vivir en `infra/docker-compose.yml` como un servicio más, con su propio healthcheck — igual que la API FastAPI o MLflow en este mismo repo.
+
+Está marcado explícitamente como "Extensión futura" fuera del alcance del plan actual (`docs/PLAN_MCP.md`, sección "Extensiones futuras") — el objetivo de este proyecto es aprender bien el ciclo de vida de una sesión `stdio` antes de añadir esa complejidad.
+
+[↑ Volver al índice](#índice)
+
+---
+
+# 11. stdout y stderr en el transporte stdio de MCP
+
+## Qué son, a nivel de sistema operativo
+
+Todo proceso arranca con tres canales de E/S ya abiertos, identificados por un número (*file descriptor*):
+
+| Canal | fd | Para qué está pensado |
+|---|---|---|
+| `stdin` | 0 | Entrada — lo que el proceso lee |
+| `stdout` | 1 | Salida **principal** del programa — su resultado real |
+| `stderr` | 2 | Salida de **diagnóstico** — logs, warnings, errores |
+
+La distinción no es solo una convención de buen estilo: son dos flujos *independientes*, y cualquier programa (o quien lo lanza) puede redirigirlos por separado. Es lo que permite hacer `comando > salida.txt 2> errores.txt`, o encadenar `comando1 | comando2` — ese `|` conecta el `stdout` de `comando1` con el `stdin` de `comando2`, sin tocar `stderr` para nada. Por diseño, `stdout` es lo que un programa produce para que *otro programa* lo consuma; `stderr` es lo que produce para que lo vea un *humano* (o un sistema de logging), y por eso sigue siendo visible en la terminal aunque `stdout` esté redirigido a un fichero.
+
+## Por qué esto importa especialmente en MCP con transporte stdio
+
+Cuando un host lanza un servidor MCP como subproceso (`StdioServerParameters` en este proyecto — ver sección 9), el `stdout` del proceso hijo **deja de ser "salida para un humano"** y pasa a ser, literalmente, el canal del protocolo: cada mensaje JSON-RPC 2.0 que el servidor envía al cliente se escribe ahí, y el cliente lee ese flujo byte a byte esperando encontrar únicamente JSON-RPC válido.
+
+```
+┌─────────────────────┐    stdout (subproceso) = stdin (host)
+│ server.py (hijo)      │ ──────────────────────────────────▶  cliente lee y parsea JSON-RPC
+│   mcp.run()            │
+│   logging → stderr    │ ──────────────────────────────────▶  visible en la terminal/logs
+└─────────────────────┘    stderr (subproceso), fuera del protocolo
+```
+
+Si cualquier cosa dentro del servidor escribe algo que no sea un mensaje JSON-RPC a `stdout` — un `print()` de depuración olvidado, una librería de terceros con un logger mal configurado que por defecto manda a `stdout` — esa línea se mezcla con el flujo del protocolo. El cliente intenta parsearla como JSON-RPC, falla, y el fallo es **silencioso y difícil de depurar**: no explota en el `print()` que lo causó, sino más tarde, en el primer intento de parseo de ese byte contaminado, con un error que no apunta a la causa real. Este riesgo está anotado explícitamente en `docs/PLAN_MCP.md` ("Riesgos" → "Contaminación de stdout en transporte stdio"), con una advertencia concreta sobre librerías de GCP/MLflow, que a veces logean a `stdout` por defecto.
+
+Por eso `src/mcp/server/server.py` hace esto explícitamente al arrancar:
+
+```python
+setup_logging(stream=sys.stderr)
+```
+
+`setup_logging()` (en `src/common/logging_setup.py`, ver sección 4) escribe a `sys.stdout` por defecto — correcto para `app.py`, los DAGs y los scripts batch, donde no hay ningún protocolo que proteger. Se parametrizó el `stream` precisamente para que el servidor MCP pudiera pedir `stderr` sin tocar el comportamiento de ningún otro consumidor de esa función.
+
+## Un matiz importante: esto solo aplica al *servidor*, no a cualquier proceso que hable MCP
+
+Es fácil pensar que "en MCP, nunca se puede hacer `print()`" — no es así. La regla es más estrecha: **el `stdout` del proceso que actúa como servidor en una conexión stdio concreta** es el que hay que proteger, porque es el que su *cliente* está leyendo como protocolo. El `stdout` del cliente/host (el proceso de más arriba, el que el humano tiene abierto en su propia terminal) es un `stdout` normal y corriente — nada lo está parseando como JSON-RPC.
+
+Esto se ve con claridad comparando los dos lados en este proyecto:
+
+- `src/mcp/server/server.py` (el servidor): **nunca** hace `print()` — todo pasa por `logging`, dirigido a `stderr`.
+- `src/mcp/client/repl.py` y `src/mcp/client/agent.py` (los clientes/hosts): usan `print()` libremente — para mostrar el resultado de una tool, la respuesta del modelo, o (con `--verbose` en `repl.py`) el JSON-RPC crudo que cruza el cable. Ese `stdout` es la terminal del usuario, no el canal hacia ningún otro proceso que lo vaya a parsear.
+
+El criterio de aceptación de la Fase 1 del plan lo verifica justo en este sentido: redirigir el `stdout` del *servidor* a un fichero mientras se le manda una petición manual, y confirmar que no aparece ahí ningún byte que no sea JSON-RPC válido.
+
+[↑ Volver al índice](#índice)
+
+---
+
+# 12. Manejo de errores: de errors.py a ToolError
+
+## Primero, lo básico: qué es una excepción en Python
+
+Cuando algo va mal dentro de una función de Python — un dato que no existe, una división entre cero, una llamada de red que falla — el lenguaje no "devuelve un error" como valor normal. En vez de eso, **lanza una excepción**: crea un objeto que representa "esto ha ido mal" y detiene inmediatamente la ejecución de esa función, devolviendo el control hacia quien la llamó. Si quien la llamó tampoco se ocupa de ese objeto, sigue subiendo hacia quien llamó a ese, y así sucesivamente — a esto se le llama **propagar** la excepción. Si nadie la "atrapa" en todo el camino, el programa entero se detiene y Python imprime un *traceback* (la cadena de llamadas que llevó hasta el error).
+
+```python
+def buscar_estacion(id):
+    if id not in catalogo:
+        raise ValueError(f"no existe la estación {id}")   # lanza la excepción, aquí termina la función
+    return catalogo[id]
+
+estacion = buscar_estacion(9999)   # si no se atrapa, el programa se detiene aquí
+```
+
+Para no dejar que el programa se detenga, se envuelve el código que puede fallar en un bloque `try`, y se indica qué hacer si ocurre un tipo concreto de excepción con `except`:
+
+```python
+try:
+    estacion = buscar_estacion(9999)
+except ValueError as e:
+    print(f"algo falló: {e}")   # el programa continúa, no se detiene
+```
+
+`as e` simplemente le da un nombre a ese objeto-excepción, para poder leer su mensaje (`str(e)`) o inspeccionarlo. Un detalle importante para lo que viene después: `except ValueError` solo atrapa excepciones de ese tipo exacto (o subclases suyas) — si la función lanzara un `TypeError`, este bloque lo dejaría pasar de largo, sin atraparlo. Esto es lo que permite tratar distintos tipos de fallo de forma distinta, en vez de un `except` genérico que atrape "cualquier cosa".
+
+## El problema que resuelve este diseño: el host necesita saber *qué* pasó, no solo *que* pasó algo
+
+Cuando una tool de un servidor MCP falla, el SDK tiene que decidir qué le cuenta al cliente (y, a través de él, al modelo). Aquí hay una tensión real: contar el mensaje de error tal cual, sin filtrar, es arriesgado — una excepción inesperada podría filtrar detalles internos (una query SQL completa, una ruta de fichero del servidor, credenciales en un mensaje de librería). Por eso el SDK de MCP, **por defecto**, trata cualquier excepción no reconocida como un fallo opaco: el cliente solo ve `"Error executing tool <nombre>"`, sin el mensaje original, y el servidor loguea el traceback completo solo en su propio `stderr` (ver sección 11).
+
+El problema es que, sin ningún ajuste, **esto también se aplica a errores de dominio perfectamente normales y esperables** — "la estación 9999 no existe" no es un fallo de infraestructura ni un riesgo de seguridad, es información que el modelo podría usar para, por ejemplo, pedirle al usuario un id distinto. Si ese mensaje se descarta igual que un fallo real de BigQuery caído, el modelo se queda ciego ante algo que sí podía haber manejado.
+
+La solución del SDK es un segundo tipo de excepción, `ToolError`, que es la **única** que se trata de forma distinta: si una tool lanza `ToolError(mensaje)`, el cliente recibe ese `mensaje` tal cual, marcado como `is_error=True` — no un crash, sino un resultado normal con una bandera de error. El modelo lo ve en la conversación y puede reaccionar (pedir otro id, disculparse, sugerir una alternativa). Cualquier otra excepción sigue yendo por la vía del mensaje genérico. Así que el diseño que hay que construir en `server.py` tiene un objetivo muy concreto: **que los errores que el modelo sí puede aprovechar lleguen como `ToolError`, y que los que no, sigan tratándose como crash** — nunca al revés.
+
+## `errors.py`: un vocabulario de errores de dominio que no sabe nada de MCP
+
+```python
+class StationNotFoundError(Exception):
+    pass
+
+class ModelUnavailableError(Exception):
+    pass
+
+class ForecastUnavailableError(Exception):
+    pass
+```
+
+Son clases de excepción **a medida**, cada una heredando directamente de `Exception` (la clase base de la que heredan todas las excepciones en Python) — con esto basta para que `except StationNotFoundError` las distinga del resto. `data_layer.py` (sección 9) lanza estas excepciones cuando detecta el problema correspondiente — por ejemplo, `StationCatalog.get()` lanza `StationNotFoundError` si el id no está en el catálogo cargado en memoria.
+
+El detalle deliberado es que **`errors.py` no importa el paquete `mcp` en absoluto**. Son excepciones de Python normales, sin ninguna relación con el protocolo. Esto tiene dos razones: la capa de datos (`data_layer.py`) queda testeable con `pytest` puro sin montar nada de MCP alrededor (como ya se prueba en `tests/test_mcp/test_data_layer.py`), y esas mismas excepciones podrían, en teoría, reutilizarse si mañana existiera otra forma de exponer estos datos que no fuera MCP — nada en su diseño las ata al protocolo.
+
+## `server.py`: el único lugar donde se traduce una cosa en la otra
+
+Aquí es donde entra el patrón que aparece en cada tool, usando `get_station_status` como ejemplo real del repo:
+
+```python
+@mcp.tool(name="get_station_status", ...)
+def get_station_status(station_id: int) -> StationInfo:
+    try:
+        return _catalog.get(station_id)
+    except StationNotFoundError as e:
+        raise ToolError(str(e)) from e
+```
+
+Paso a paso, para quien no esté familiarizado con `try/except`:
+
+1. `try:` envuelve la llamada real al dominio (`_catalog.get(station_id)`). Si todo va bien, su resultado se devuelve normalmente y el `except` ni se evalúa.
+2. Si `_catalog.get()` lanza `StationNotFoundError`, la ejecución salta inmediatamente al bloque `except StationNotFoundError as e` — `e` es el objeto de esa excepción, y `str(e)` es su mensaje de texto (p. ej. *"No existe la estación 9999"*).
+3. `raise ToolError(str(e)) from e` hace dos cosas a la vez: **lanza una excepción nueva**, de un tipo distinto (`ToolError`, que sí entiende el SDK de MCP), reutilizando el mismo texto; y **la encadena** a la excepción original con `from e` — esto no cambia qué ve el cliente, pero conserva en el traceback interno la causa original, útil si algún día hay que depurar esto desde los logs del servidor.
+
+El resultado: lo que el cliente MCP recibe no es `StationNotFoundError` (que el SDK no conocería, y trataría como crash) ni el error genérico — es exactamente el mensaje de dominio, pero empaquetado en el único tipo de excepción que el SDK sabe traducir a `is_error=True`. Si `get_station_status` tuviera un bug real no previsto (por ejemplo, un `TypeError` por un dato corrupto), ese `except StationNotFoundError` no lo atraparía — seguiría propagándose sin traducir, y el SDK lo trataría correctamente como un crash con traceback en el servidor. Esa es la frontera que todo el diseño protege: solo se traduce lo que se decidió explícitamente que el modelo puede aprovechar.
+
+## El mismo patrón, pero distinto mecanismo, para resources
+
+Para los *resources* (sección 9) el objetivo final es el mismo — que el error de dominio llegue traducido, no como mensaje genérico — pero el mecanismo del SDK es distinto:
+
+```python
+try:
+    return _catalog.get(sid).model_dump(mode="json")
+except StationNotFoundError as e:
+    raise ResourceNotFoundError(str(e)) from e
+```
+
+Aquí `ResourceNotFoundError` no produce un resultado con una bandera `is_error=True` como `ToolError` — provoca que el **cliente reciba una excepción real de protocolo** (`MCPError`), que hay que capturar explícitamente con su propio `try/except MCPError` alrededor de `read_resource()` (así lo hacen tanto `repl.py` como `agent.py`). Son dos mecanismos del protocolo distintos para el mismo propósito de fondo: que el tipo y el contenido del error lleguen al host de forma utilizable, en vez de perderse detrás de un mensaje genérico — confirmado en vivo ejecutando el servidor real, no solo leído en la documentación del SDK (ver `docs/PLAN_MCP.md`, Fase 2).
+
+## Resumen: el camino completo de un error
+
+| Paso | Qué pasa |
+|---|---|
+| 1. Dominio | `data_layer.py` detecta el problema y lanza una excepción de `errors.py` (`StationNotFoundError`...) — sin saber nada de MCP |
+| 2. Traducción (único lugar) | `server.py` atrapa esa excepción concreta con `try/except` y la relanza como `ToolError` (tools) o `ResourceNotFoundError`/`ResourceError` (resources) |
+| 3a. Si es `ToolError` | El SDK lo convierte en un resultado normal con `is_error=True` y el mensaje intacto — el modelo lo ve en la conversación |
+| 3b. Si es `ResourceNotFoundError`/`ResourceError` | El SDK lo convierte en una excepción `MCPError` que el cliente debe capturar explícitamente |
+| 3c. Si es cualquier otra excepción no traducida | El SDK la trata como un crash: mensaje genérico para el cliente, traceback completo solo en los logs del servidor (`stderr`) |
+
+[↑ Volver al índice](#índice)
+
+---
+
+# 13. Qué es un REPL y por qué se ha construido aquí
+
+## Qué es un REPL
+
+REPL son las siglas de **R**ead-**E**val-**P**rint-**L**oop: un programa que repite, indefinidamente, cuatro pasos — lee lo que escribes, lo evalúa (ejecuta algo con ello), imprime el resultado, y vuelve a empezar. No es un concepto específico de MCP ni de este proyecto: el propio intérprete de Python al que se entra escribiendo `python` sin argumentos es un REPL (lees una línea, la ejecuta, imprime el resultado, repite), igual que una consola de `node`, o un cliente de línea de comandos de una base de datos (`psql`, `sqlite3`). La característica común es la interacción **turno a turno**, sin un script predefinido de antemano — tú decides qué pasa en cada vuelta.
+
+`src/mcp/client/repl.py` aplica exactamente esa idea al protocolo MCP: en vez de evaluar expresiones de Python, cada vuelta del bucle lee un comando que tú escribes (`tools`, `call get_station_status {"station_id": 1}`, `read bicimad://stations`...) y lo traduce a una llamada real al servidor MCP — `list_tools()`, `call_tool()`, `read_resource()`. No hay ningún modelo de lenguaje de por medio; **tú** eres quien decide qué tool llamar y con qué argumentos, escribiéndolo a mano.
+
+## Por qué se ha construido como un paso propio, antes del bucle agéntico
+
+El motivo no es simplemente "hay que tener un cliente de prueba" — es una decisión deliberada de **secuenciar el aprendizaje en capas independientes**. Un servidor MCP conectado a un modelo (`agent.py`, Fase 4) tiene dos fuentes de fallo completamente distintas que, si se prueban juntas desde el principio, son difíciles de distinguir:
+
+1. **Fallos de protocolo/transporte**: un `resource` mal definido, un error que no se traduce a `ToolError` correctamente (sección 12), el *framing* de `stdio` roto por un `print()` donde no debía (sección 11), un JSON Schema mal generado a partir de un type hint...
+2. **Fallos de decisión del modelo**: el LLM elige la tool equivocada, construye mal los argumentos, no encadena las llamadas en el orden correcto.
+
+Si el primer cliente que se prueba contra el servidor ya tiene un modelo en el bucle, y algo falla, no hay forma rápida de saber cuál de las dos causas es la responsable. `repl.py` elimina la segunda variable por completo: tú decides exactamente qué tool se llama y con qué argumentos, así que si algo se rompe, **tiene que ser el servidor o el protocolo** — no puede ser una mala decisión de un modelo, porque no hay ningún modelo decidiendo nada. Es el mismo principio que ya aparece en la Fase 0 del plan (`docs/PLAN_MCP.md`): aislar la lógica de negocio de la capa de transporte antes de mezclar ambas.
+
+El flag `--verbose` de `repl.py` (sección 11) lleva esta idea un paso más allá: no solo prueba el servidor a mano, sino que **muestra literalmente** los mensajes JSON-RPC crudos que cruzan el cable — ver `id`, `method`, `params` tal cual viajan, en vez de solo leer sobre ellos en la especificación, es lo que convierte "leer la spec" en "entender el protocolo de verdad" (la distinción que ya quedó documentada al descubrir que el SDK usa `server/discover` en vez del `initialize`/`initialized` clásico — ver sección 9 y Fase 1 del plan).
+
+## ¿Es esto algo habitual en un proyecto MCP real?
+
+No exactamente con este nombre ni como entregable obligatorio — pero la necesidad que cubre sí es real y universal: todo SDK de MCP serio viene con un **MCP Inspector** (`uv run mcp dev server.py` en este proyecto), una herramienta gráfica que hace básicamente lo mismo que `repl.py` — listar y llamar tools/resources/prompts a mano, sin modelo — y que normalmente sustituye a escribir un REPL propio en un proyecto productivo. Construir `repl.py` aquí, en vez de depender solo del Inspector, es una elección deliberadamente educativa: escribir con tus propias manos el código que llama a `list_tools()`, `call_tool()`, `read_resource()` obliga a entender la forma exacta de cada respuesta (`CallToolResult.is_error`, `.content`, `.structured_content`...) de un modo que clicar botones en una UI no exige.
+
+## ¿Deja de tener sentido una vez existe `agent.py`?
+
+No — y esto merece aclararse porque no es obvio a priori. `repl.py` no "evoluciona" hacia `agent.py` ni queda obsoleto cuando el bucle agéntico existe; se quedan como **dos herramientas paralelas con propósitos distintos**, ambas vigentes (de hecho, ambas siguen en el repo, sección 9). Precisamente porque `repl.py` aísla el servidor del modelo, sigue siendo la forma más rápida de descartar una causa cuando algo falla en `agent.py`: si una tool se comporta raro desde el cliente agéntico, repetir la misma llamada a mano en `repl.py` dice de inmediato si el problema está en el servidor (se reproduce igual sin modelo) o en cómo el modelo decidió llamarla (no se reproduce, porque a mano con los argumentos correctos funciona). Perder `repl.py` después de construir `agent.py` significaría perder esa capacidad de diagnóstico por capas que fue, desde el principio, la razón de construirlo.
 
 [↑ Volver al índice](#índice)

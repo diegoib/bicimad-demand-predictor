@@ -20,9 +20,12 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from src.common.config import settings
 from src.common.logging_setup import setup_logging
 from src.common.schemas import BatchPredictionRow
+from src.serving.predictions_query import (
+    load_latest_prediction_for_station,
+    load_latest_predictions,
+)
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -34,48 +37,6 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# Storage helpers
-# ---------------------------------------------------------------------------
-
-
-def _load_latest_bigquery() -> list[BatchPredictionRow]:
-    """Load latest predictions from BigQuery `predictions` table.
-
-    Raises:
-        ImportError: If google-cloud-bigquery is not installed.
-    """
-    try:
-        from google.cloud import bigquery
-    except ImportError as e:
-        raise ImportError("Install google-cloud-bigquery for prod mode.") from e
-
-    client = bigquery.Client(project=settings.gcp_project)
-    query = f"""
-        SELECT station_id, prediction_made_at, target_time,
-               predicted_dock_bikes, model_version
-        FROM `{settings.gcp_project}.{settings.bq_dataset}.predictions`
-        WHERE DATE(prediction_made_at) = (
-            SELECT MAX(DATE(prediction_made_at))
-            FROM `{settings.gcp_project}.{settings.bq_dataset}.predictions`
-        )
-        ORDER BY prediction_made_at DESC
-        LIMIT 1 OVER (PARTITION BY station_id)
-    """
-    rows = []
-    for row in client.query(query):
-        rows.append(
-            BatchPredictionRow(
-                station_id=row["station_id"],
-                prediction_made_at=row["prediction_made_at"],
-                target_time=row["target_time"],
-                predicted_dock_bikes=row["predicted_dock_bikes"],
-                model_version=row["model_version"],
-            )
-        )
-    return rows
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -84,7 +45,7 @@ def _load_latest_bigquery() -> list[BatchPredictionRow]:
 def health() -> dict[str, Any]:
     """Liveness check. Always returns 200."""
     try:
-        rows = _load_latest_bigquery()
+        rows = load_latest_predictions()
         predictions_available = len(rows)
         latest_ts: datetime | None = rows[0].prediction_made_at if rows else None
     except Exception:
@@ -106,7 +67,7 @@ def predictions_latest() -> list[BatchPredictionRow]:
         503: If no predictions have been written yet.
     """
     try:
-        return _load_latest_bigquery()
+        return load_latest_predictions()
     except Exception as e:
         raise HTTPException(status_code=503, detail="No predictions available yet") from e
 
@@ -119,18 +80,16 @@ def predictions_station(station_id: int) -> BatchPredictionRow:
         station_id: Numeric BiciMAD station ID.
 
     Raises:
-        503: If no predictions have been written yet.
+        503: If BigQuery could not be queried.
         404: If station_id has no prediction in the latest batch.
     """
     try:
-        rows = _load_latest_bigquery()
+        row = load_latest_prediction_for_station(station_id)
     except Exception as e:
         raise HTTPException(status_code=503, detail="No predictions available yet") from e
 
-    for row in rows:
-        if row.station_id == station_id:
-            return row
-
-    raise HTTPException(
-        status_code=404, detail=f"Station {station_id} not found in latest predictions"
-    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Station {station_id} not found in latest predictions"
+        )
+    return row
