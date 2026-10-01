@@ -3,3 +3,4 @@ Añadir al knowledge base:
     - explicar el error handling con errors.py
     - explicar el stderr y stdout, y por qué en el MCP todo tiene que ir por stderr
     - arquitectura mcp, porque cliente y server viven en el mismo lugar
+    - poner en el runbook como ejecutar el repl, el agente, y como conectar el mcp al cliente actual de claude code
